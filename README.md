@@ -1,12 +1,12 @@
-# KVM
+# HydraKVM
 
-A low-cost, network-accessible KVM (Keyboard, Video, Monitor) built from commodity hardware. Provides remote keyboard input and video output for headless Linux and OpenBSD machines over HTTPS, targeting machines that refuse to boot or accept input without a physical keyboard and monitor connected.
+HydraKVM is a low-cost, network-accessible KVM (Keyboard, Video, Monitor) built from commodity hardware. Provides remote keyboard input and video output for headless Linux and OpenBSD machines over HTTPS, targeting machines that refuse to boot or accept input without a physical keyboard and monitor connected.
 
 ## Architecture
 
 ```
                         HTTPS
-  Browser  <─────────────────────────>  KVM Server (Linux)
+  Browser  <─────────────────────────>  HydraKVM server (Linux)
   (keyboard input,                      (Go, serves web UI,
    MJPEG video)                          HDMI capture, UART control)
                                               │
@@ -21,20 +21,20 @@ A low-cost, network-accessible KVM (Keyboard, Video, Monitor) built from commodi
                                               │
                                               │ HDMI
                                               │
-                                        Capture Dongle ──── USB ──── KVM Server
+                                        Capture Dongle ──── USB ──── HydraKVM server
 ```
 
 ### Keyboard path
 
-The KVM server sends 2-byte HID-encoded keystroke pairs (`{modifier, keycode}`) over a serial connection to a Raspberry Pi Pico. The Pico presents itself to the target machine as a standard USB HID keyboard and replays each pair as a keypress-release cycle. The target machine sees a normal keyboard — no drivers, no software, works from BIOS/bootloader onwards.
+The HydraKVM server sends 2-byte HID-encoded keystroke pairs (`{modifier, keycode}`) over a serial connection to a Raspberry Pi Pico. The Pico presents itself to the target machine as a standard USB HID keyboard and replays each pair as a keypress-release cycle. The target machine sees a normal keyboard — no drivers, no software, works from BIOS/bootloader onwards.
 
 ### Video path
 
-A MACROSILICON-based USB HDMI capture dongle receives the target machine's HDMI output and exposes it as a UVC device. The KVM server reads MJPEG frames from the dongle via V4L2 and serves them to the browser. The dongle handles scaling and JPEG compression internally.
+A MACROSILICON-based USB HDMI capture dongle receives the target machine's HDMI output and exposes it as a UVC device. The HydraKVM server reads MJPEG frames from the dongle via V4L2 and serves them to the browser. The dongle handles scaling and JPEG compression internally.
 
 ### Wire protocol
 
-Every message from the KVM server to the Pico is exactly 2 bytes: one modifier bitmask and one HID usage ID keycode. No framing, no escape characters. The KVM server is responsible for mapping terminal input (ASCII, VT100 escape sequences) to HID codes before transmission. The Pico firmware has no knowledge of ASCII — it receives HID pairs and sends USB reports.
+Every message from the HydraKVM server to the Pico is exactly 2 bytes: one modifier bitmask and one HID usage ID keycode. No framing, no escape characters. The HydraKVM server is responsible for mapping terminal input (ASCII, VT100 escape sequences) to HID codes before transmission. The Pico firmware has no knowledge of ASCII — it receives HID pairs and sends USB reports.
 
 Modifier bitmask values:
 
@@ -53,14 +53,14 @@ Modifier bitmask values:
 
 ### Current development setup
 
-- **KVM server**: Linux laptop (Ubuntu)
+- **HydraKVM server**: Linux laptop (Ubuntu)
 - **Keyboard MCU**: Raspberry Pi Pico (RP2040, original, not Pico 2/RP2350)
 - **HDMI capture**: MACROSILICON-based USB dongle ($10, USB 2.0, max 1080p MJPEG)
 - **Serial link**: CP2102 USB-to-TTL adapter for development; Waveshare multi-channel adapter for production
 
 ### Target production hardware
 
-- **KVM server**: Raspberry Pi 3B with powered USB hub
+- **HydraKVM server**: Raspberry Pi 3B with powered USB hub
 - **Serial link (option A)**: Waveshare USB TO 8CH TTL (SKU 27076, $33) — if UART over Cat5e proves reliable alongside HDMI cables
 - **Serial link (option B)**: Waveshare USB TO 8CH RS485 (SKU 28214, $18) with HiLetgo 3.3V RS485 transceivers on each Pico — better noise immunity over longer Cat5e runs
 - **HDMI capture**: one MACROSILICON dongle per target machine, connected through powered USB hub
@@ -122,14 +122,14 @@ cmake ..
 cmake --build . -j8
 
 # Flash: hold BOOTSEL on the Pico, plug into USB, then either:
-cp kvm.uf2 /media/$USER/RPI-RP2/     # Linux
+cp hydra-keyboard.uf2 /media/$USER/RPI-RP2/     # Linux
 # or
-cp kvm.uf2 /Volumes/RPI-RP2/         # macOS
+cp hydra-keyboard.uf2 /Volumes/RPI-RP2/         # macOS
 # or
-picotool load kvm.uf2 -f
+picotool load hydra-keyboard.uf2 -f
 ```
 
-The build produces `kvm.uf2` in the build directory.
+The build produces `hydra-keyboard.uf2` in the build directory.
 
 ### CMake configuration notes
 
@@ -138,7 +138,7 @@ The build produces `kvm.uf2` in the build directory.
 - `PICO_DEFAULT_UART` is set to 1, with TX on GP4 and RX on GP5, to avoid conflict with the UART0 command channel
 - Linked libraries: `pico_stdlib`, `tinyusb_device`, `tinyusb_board`, `pico_multicore`
 
-## KVM server (Go)
+## HydraKVM server (Go)
 
 A Go program reads terminal input, maps ASCII characters and control codes to HID usage IDs, and writes 2-byte pairs to the serial device connected to the Pico.
 
@@ -147,15 +147,15 @@ A Go program reads terminal input, maps ASCII characters and control codes to HI
 ```sh
 cd server
 go mod tidy
-go build -o kvm-send ./cmd/send
+go build
 ```
 
 ### Usage (development)
 
 ```sh
 # Interactive keyboard passthrough
-./kvm-send /dev/ttyUSB0     # Linux
-./kvm-send /dev/cu.usbserial-XXXXX  # macOS
+./hydrakvm /dev/ttyUSB0     # Linux
+./hydrakvm /dev/cu.usbserial-XXXXX  # macOS
 ```
 
 Type into the terminal; keystrokes are sent to the Pico and appear on the target machine. Ctrl+] to quit.
@@ -178,7 +178,7 @@ Type into the terminal; keystrokes are sent to the Pico and appear on the target
 ### Not yet implemented
 
 - Web UI (HTML5 with keyboard capture and MJPEG display)
-- HDMI capture integration on the KVM server
+- HDMI capture integration on the HydraKVM server
 - Arrow keys, F-keys, and other multi-byte escape sequences
 - Multi-target switching
 - RS485 or TTL over Cat5e (currently using direct CP2102 for development)

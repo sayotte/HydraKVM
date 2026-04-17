@@ -28,30 +28,30 @@ set(PICO_BOARD pico CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(kvm C CXX ASM)
+project(hydra-keyboard C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(kvm kvm.c usb_descriptors.c helper.c ringbuf.c)
+add_executable(hydra-keyboard hydra-keyboard.c usb_descriptors.c helper.c ringbuf.c)
 
-pico_set_program_name(kvm "kvm")
-pico_set_program_version(kvm "0.1")
+pico_set_program_name(hydra-keyboard "hydra-keyboard")
+pico_set_program_version(hydra-keyboard "0.1")
 
-target_compile_definitions(kvm PRIVATE
+target_compile_definitions(hydra-keyboard PRIVATE
     PICO_DEFAULT_UART=1
     PICO_DEFAULT_UART_TX_PIN=4
     PICO_DEFAULT_UART_RX_PIN=5
 )
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(kvm 1)
-pico_enable_stdio_usb(kvm 0)
+pico_enable_stdio_uart(hydra-keyboard 1)
+pico_enable_stdio_usb(hydra-keyboard 0)
 
 # Add the standard library to the build
-target_link_libraries(kvm PRIVATE
+target_link_libraries(hydra-keyboard PRIVATE
         pico_stdlib
         tinyusb_device
         tinyusb_board
@@ -59,9 +59,9 @@ target_link_libraries(kvm PRIVATE
 )
 
 # Add the standard include files to the build
-target_include_directories(kvm PRIVATE
+target_include_directories(hydra-keyboard PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
 )
 
-pico_add_extra_outputs(kvm)
+pico_add_extra_outputs(hydra-keyboard)
 

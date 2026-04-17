@@ -108,7 +108,7 @@ char const *string_desc_arr[] = {
     // manufacturer
     "Needlessly Complex",
     // product
-    "Virtual Keyboard",
+    "HydraKVM Keyboard",
     // serial
     NULL,
 };
