@@ -3,26 +3,42 @@
 #include "hardware/uart.h"
 #include "hardware/irq.h"
 #include "hardware/sync.h"
+#include "hardware/watchdog.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
+#include "pico/util/queue.h"
 #include "bsp/board.h"
 #include "tusb.h"
 
-#include "ringbuf.h"
+#define HID_REPORT_TIMEOUT_US  10000   // 10ms — ~10 USB frames
+#define WATCHDOG_TIMEOUT_MS    5000
+#define UART_BAUDRATE          115200
+#define CMD_QUEUE_DEPTH        64 // in a 10ms timeout we'll accumulate ~38 commands
 
-static ringbuf_t uart_rx_buf;
+static queue_t cmd_queue;
+
+// Anomaly counters. Inspect via debugger or surface over uart1 (debug)
+static volatile uint32_t n_hid_timeouts;
+static volatile uint32_t n_discarded_unmounted;
 
 void on_uart_rx_isr() {
-    while(uart_is_readable(uart0)) {
-        char ch = uart_getc(uart0);
-        ringbuf_write(&uart_rx_buf, ch);
+    static uint16_t cmd;
+    static bool have_first = false;
+    while (uart_is_readable(uart0)) {
+        if (!have_first) {
+            cmd = (uint16_t)uart_getc(uart0) << 8;   // mod in high byte
+            have_first = true;
+        }
+        else {
+            cmd |= (uint8_t)uart_getc(uart0);        // keycode in low byte
+            queue_try_add(&cmd_queue, &cmd);
+            have_first = false;
+        }
     }
 }
 
 void wire_uart() {
-    ringbuf_init(&uart_rx_buf);
-
-    uart_init(uart0, 115200);
+    uart_init(uart0, UART_BAUDRATE);
     gpio_set_function(0, GPIO_FUNC_UART); // TX on GPIO-0 
     gpio_set_function(1, GPIO_FUNC_UART); // RX on GPIO-1
     gpio_pull_up(1);
@@ -34,89 +50,105 @@ void wire_uart() {
 
 void core1_main() {
     wire_uart();
-    uint8_t first_byte;
-    bool have_first = false;
-
-    while(true) {
-        char ch;
-        if(ringbuf_read(&uart_rx_buf, &ch)) {
-            if (!have_first) {
-                first_byte = (uint8_t)ch;
-                have_first = true;
-            } else {
-                uint32_t cmd = ((uint32_t)first_byte << 8) | (uint8_t)ch;
-                multicore_fifo_push_blocking(cmd);
-                have_first = false;
-            }
-        } else {
-            // If no outstanding work, wait for any interrupt to wake us up
-            //
-            // Disable interrupts as we do it-- avoids a race between ISR writing data
-            // between us seeing the ringbuf is empty and calling __wfi(). When we wake
-            // from __wfi() the interrupt bit will be set, so as soon as we enable the
-            // interrupt the ISR will immediately fire.
-            uint32_t saved_ints = save_and_disable_interrupts();
-            if(ringbuf_empty(&uart_rx_buf)) {
-                __wfi();
-            }
-            restore_interrupts(saved_ints);
-        }        
-    }
 }
 
-void on_sio_core0_isr() {
-    multicore_fifo_clear_irq();
+// Poll tud_task() until the HID IN endpoint is free or the deadline
+// expires. Bounded wait so a dead/stalled host can't wedge us forever.
+static bool hid_ready_wait(uint32_t timeout_us) {
+    absolute_time_t deadline = make_timeout_time_us(timeout_us);
+    while (!tud_hid_ready()) {
+        tud_task();
+        if (time_reached(deadline)) return false;
+    }
+    return true;
+}
+
+static void drain_cmd_queue(void) {
+    uint16_t discard;
+    while (queue_try_remove(&cmd_queue, &discard)) {
+        n_discarded_unmounted++;
+    }
 }
 
 void usb_loop_once() {
     tud_task();
 
-    if (multicore_fifo_rvalid()) {
-        uint32_t cmd = multicore_fifo_pop_blocking();
+    // If the bus isn't usable, discard queued input instead of letting
+    // it pile up and replay stale keystrokes when the host returns.
+    if (!tud_mounted() || tud_suspended()) {
+        drain_cmd_queue();
+    }
+    else {
+        uint16_t cmd;
+        if (!queue_try_remove(&cmd_queue, &cmd)) {
+            return;
+        }
+
         uint8_t mod = (cmd >> 8) & 0xFF;
         uint8_t kc  = cmd & 0xFF;
 
-        // Press
-        while (!tud_hid_ready()) { tud_task(); }
-        uint8_t keys[6] = {kc, 0, 0, 0, 0, 0};
-        tud_hid_keyboard_report(0, mod, keys);
+        if (hid_ready_wait(HID_REPORT_TIMEOUT_US)) {
+            uint8_t keys[6] = {kc, 0, 0, 0, 0, 0};
+            tud_hid_keyboard_report(0, mod, keys);
+        }
+        else {
+            n_hid_timeouts++;
+        }
 
-        // Release
-        while (!tud_hid_ready()) { tud_task(); }
-        tud_hid_keyboard_report(0, 0, NULL);
+        if (hid_ready_wait(HID_REPORT_TIMEOUT_US)) {
+            tud_hid_keyboard_report(0, 0, NULL);
+        }
+        else {
+            n_hid_timeouts++;
+        }
     }
 
-    // like the UART core-- sleep until an interrupt wakes us
-/*     uint32_t saved_ints = save_and_disable_interrupts();
-    if(!tud_task_event_ready() && !multicore_fifo_rvalid()) {
-        __wfi();
+    // Sleep until there's work to do. WFE wakes on cross-core SEV
+    // (queue_try_add on core 1) or any enabled IRQ going pending
+    // (USB IRQ on this core), via SCR.SEVONPEND.
+    if (!tud_task_event_ready() && queue_is_empty(&cmd_queue)) {
+        __wfe();
     }
-    restore_interrupts(saved_ints); */
-
-    return;
 }
+
+// Do nothing when the timer fires-- it exists merely to trigger an interrupt
+// to wake us up occasionally so the watchdog doesn't kill us.
+static bool liveness_tick(repeating_timer_t *t) { (void)t; return true; }
 
 int main(void) {
     board_init();
     stdio_init_all();
     tusb_init();
+    queue_init(&cmd_queue, sizeof(uint16_t), CMD_QUEUE_DEPTH);
+
+    watchdog_enable(WATCHDOG_TIMEOUT_MS, true);  // true == pause on debug halt
+    // Wake 1x/sec, allowing us to loop if we're waiting on events/interrupts
+    // This prevents the watchdog from rebooting us needlessly, but if we're
+    // stuck on anything else this won't break us free and the watchdog will
+    // appropriately fire.
+    static repeating_timer_t liveness_timer;
+    add_repeating_timer_ms(1000, liveness_tick, NULL, &liveness_timer);
+
     multicore_launch_core1(core1_main);
 
-/*     while(!tud_mounted()) {
-        tud_task();
-        sleep_ms(50);
-        printf("usb: waiting for tud_mounted() to be true\n");
-    } */
-
- /*    irq_set_exclusive_handler(SIO_IRQ_PROC0, on_sio_core0_isr);
-    irq_set_enabled(SIO_IRQ_PROC0, true); */
     while(true) {
+        watchdog_update();
         usb_loop_once();
     }
 
     return 0;
 }
 
+// On (re)connect, flush any phantom key left pressed by a partial
+// send before disconnect, and discard stale queued input.
+void tud_mount_cb(void) {
+    drain_cmd_queue();
+    if (tud_hid_ready()) tud_hid_keyboard_report(0, 0, NULL);
+}
+
+void tud_umount_cb(void) {
+    drain_cmd_queue();
+}
 
 // TinyUSB callbacks we don't use but must provide
 uint16_t tud_hid_get_report_cb(uint8_t i, uint8_t id, hid_report_type_t t,
