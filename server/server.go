@@ -137,13 +137,13 @@ func main() {
 
 		// Check ASCII table first
 		if k, ok := asciiToHID[ch]; ok {
-			port.Write([]byte{k.mod, k.kc})
+			port.Write([]byte{0xFF, k.mod, k.kc})
 			continue
 		}
 
 		// Check control characters
 		if k, ok := ctrlToHID[ch]; ok {
-			port.Write([]byte{k.mod, k.kc})
+			port.Write([]byte{0xFF, k.mod, k.kc})
 			continue
 		}
 	}

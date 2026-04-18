@@ -17,22 +17,47 @@
 
 static queue_t cmd_queue;
 
+// Wire protocol: every command is 3 bytes: [0xFF, mod, kc].
+// 0xFF is never a valid keycode (reserved in HID usage page 0x07)
+// and is effectively impossible as a mod byte (all 8 modifiers held
+// at once). Any stray 0xFF re-syncs the receiver, so a dropped or
+// garbled byte costs at most one command.
+#define SYNC_BYTE 0xFF
+
 // Anomaly counters. Inspect via debugger or surface over uart1 (debug)
 static volatile uint32_t n_hid_timeouts;
 static volatile uint32_t n_discarded_unmounted;
+static volatile uint32_t n_resyncs;          // unexpected SYNC mid-frame
+static volatile uint32_t n_pre_sync_bytes;   // bytes arriving before first SYNC
 
 void on_uart_rx_isr() {
+    enum { WAIT_SYNC, WAIT_MOD, WAIT_KC };
+    static uint8_t state = WAIT_SYNC;
     static uint16_t cmd;
-    static bool have_first = false;
+
     while (uart_is_readable(uart0)) {
-        if (!have_first) {
-            cmd = (uint16_t)uart_getc(uart0) << 8;   // mod in high byte
-            have_first = true;
+        uint8_t b = (uint8_t)uart_getc(uart0);
+
+        if (b == SYNC_BYTE) {
+            if (state != WAIT_SYNC) n_resyncs++;
+            state = WAIT_MOD;
+            continue;
         }
-        else {
-            cmd |= (uint8_t)uart_getc(uart0);        // keycode in low byte
-            queue_try_add(&cmd_queue, &cmd);
-            have_first = false;
+
+        switch (state) {
+            case WAIT_SYNC:
+                // Desynced — drop bytes until the next SYNC arrives.
+                n_pre_sync_bytes++;
+                break;
+            case WAIT_MOD:
+                cmd = (uint16_t)b << 8;
+                state = WAIT_KC;
+                break;
+            case WAIT_KC:
+                cmd |= b;
+                queue_try_add(&cmd_queue, &cmd);
+                state = WAIT_SYNC;
+                break;
         }
     }
 }
