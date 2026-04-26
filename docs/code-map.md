@@ -56,3 +56,5 @@ After login succeeds, the web client initiates a Websocket connection to the ser
 
 ### KVM / Application
 Responsible for connecting Clients to Channels, maintaining appropriate state for that connection (e.g. the status of modifier keys such as CapsLock), and responding to events/commands and changes in the environment (e.g. a cable being unplugged) in a reasonable way (e.g. playing an obviously-connected but synthetic video stream when the real video-capture stream is unavailable).
+
+For initial "tap key" mechanics, the Application is charged with emitting both key-down + key-up events-- the KeySinks are naive.
