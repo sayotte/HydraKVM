@@ -84,6 +84,9 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
       // and calls KeyOut.ReportKeyEvent in order. Multiple Clients writing
       // concurrently get serialized by the channel send; backpressure flows
       // upstream to the WebSocket goroutine, which is the desired behavior.
+      // The goroutine is launched by Application on first Client attach and
+      // torn down on last detach (ref-counted lifecycle); Channel itself does
+      // not own when it runs.
       // ...
     }
 
@@ -98,8 +101,14 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
       // mutated atomically under a single Application-level lock during
       // SwitchChannel. Clients themselves do not carry a current-channel
       // pointer — Application is the single source of truth.
+      //
+      // Also owns Channel goroutine lifecycle: launches Channel.Run on
+      // first Client attach, cancels its context on last detach. This
+      // releases hardware FDs (HDMI capture, serial port) when nothing is
+      // watching and gives Application the seam to handle driver errors.
       // ...
     }
+    func NewApplication(baseCtx context.Context) *Application
     func (a *Application) SwitchChannel(ctx context.Context, p SwitchChannelParams) (SwitchChannelResult, error)
     func (a *Application) RecordKeyEvent(ctx context.Context, p KeyEventParams) error
     ```

@@ -26,6 +26,8 @@ Per configuration at startup, `main()` creates `Channel` objects which consist o
 
 Each Channel owns a single goroutine that drains an unbuffered `chan KeyEvent` and calls `KeyEventSink.ReportKeyEvent` in order. Multiple Clients driving the same Channel concurrently get serialized by the channel send; backpressure flows upstream to the WebSocket reader goroutine, which is the desired behavior (a wedged USB serial write should slow the offending Client, not silently grow a buffer).
 
+Channel goroutines are reference-counted by Application on attached Clients: the goroutine starts when the first Client attaches and is torn down (via the per-Channel context) when the last Client detaches. This is a domain decision, not a wiring detail — HDMI capture FDs must be released while no Client is watching (the kernel-side capture pipeline keeps consuming CPU on interrupts even when nothing reads), and driver errors (read/write failures, wedged FDs) are recoverable only at the Application layer (reset the driver, reattach, bounce the goroutine). The Webclient is not in a position to make those decisions.
+
 ### Clients
 Client objects are created by `http` when a web client connects to the two streaming connections for messages (websocket) and video (mjpeg). The latter implements `FrameSink`, which will be connected to various `VideoSource` feeds by `kvm.Application` when channels are selected. Client objects are cleaned up when the TCP connections associated with them go away, e.g. due to a full-page refresh or the user closing the browser tab. Note that this is different from an `http.Session`, which may have multiple Clients (one per open browser tab) but only a single authentication token.
 
