@@ -1,0 +1,21 @@
+# HydraKVM example configuration.
+#
+# Copy to /etc/hydrakvm/config.yaml (or pass --config <path>) and edit to
+# describe your channels. The fields below cover everything Step 2 wires up;
+# additional driver types (v4l, real auth providers) appear in later steps.
+
+http:
+  listen_addr: ":8080"
+
+auth:
+  provider: "null"
+  provider_config: null
+
+channels:
+  - name: "synth-1"
+    video:
+      type: "synthetic"
+      device_path: ""
+    keys:
+      type: "picolink"
+      device_path: "/dev/ttyUSB0"
