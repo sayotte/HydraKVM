@@ -183,3 +183,16 @@ Type into the terminal; keystrokes are sent to the Pico and appear on the target
 - Multi-target switching
 - RS485 or TTL over Cat5e (currently using direct CP2102 for development)
 - Custom EDID to constrain target HDMI output resolution
+
+## License
+
+HydraKVM is dual-licensed:
+
+- **AGPLv3** for open-source / non-commercial use — see [`LICENSE`](LICENSE).
+- **Commercial license** available for productization, hardware bundling,
+  and proprietary use — see [`LICENSING.md`](LICENSING.md).
+
+"HydraKVM" is an unregistered trademark; see [`TRADEMARK.md`](TRADEMARK.md)
+for what you may and may not do with the name.
+
+Contributors agree to the [`CLA.md`](CLA.md) by submitting a pull request.
