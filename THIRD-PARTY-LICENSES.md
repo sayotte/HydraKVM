@@ -22,8 +22,8 @@ notice-preservation requirements of the upstream permissive licenses.
 - **Project:** Raspberry Pi Pico SDK
 - **URL:** https://github.com/raspberrypi/pico-sdk
 - **License:** BSD-3-Clause
-- **Used in:** firmware build system and runtime — `keyboard/CMakeLists.txt`,
-  `keyboard/pico_sdk_import.cmake`, all of `keyboard/*.c` (linked against
+- **Used in:** firmware build system and runtime — `firmware/pico/CMakeLists.txt`,
+  `firmware/pico/pico_sdk_import.cmake`, all of `firmware/pico/*.c` (linked against
   `pico_stdlib`, `pico_multicore`, etc.)
 
 Copyright notice (reproduced from the upstream `LICENSE.TXT`):
@@ -39,8 +39,8 @@ License text: see [BSD-3-Clause](#bsd-3-clause-license-text) below.
 - **Project:** TinyUSB
 - **URL:** https://github.com/hathach/tinyusb
 - **License:** MIT
-- **Used in:** firmware USB stack — linked into `keyboard/hydra-keyboard.c`
-  via `tinyusb_device` / `tinyusb_board`. `keyboard/usb_descriptors.c` was
+- **Used in:** firmware USB stack — linked into `firmware/pico/hydra-keyboard.c`
+  via `tinyusb_device` / `tinyusb_board`. `firmware/pico/usb_descriptors.c` was
   derived in part from TinyUSB's HID keyboard example.
 
 Copyright notice (reproduced from upstream):
@@ -49,7 +49,7 @@ Copyright notice (reproduced from upstream):
 
 License text: see [MIT](#mit-license-text) below.
 
-The MIT notice above also covers the portions of `keyboard/usb_descriptors.c`
+The MIT notice above also covers the portions of `firmware/pico/usb_descriptors.c`
 that were derived from TinyUSB example code.
 
 ---

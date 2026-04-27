@@ -111,8 +111,8 @@ Prerequisites:
 - Ninja (or Unix Makefiles)
 
 ```sh
-# Clone and enter the project
-cd kvm
+# From the project root, enter the Pico firmware directory
+cd firmware/pico
 
 # Configure
 mkdir build && cd build
@@ -129,7 +129,7 @@ cp hydra-keyboard.uf2 /Volumes/RPI-RP2/         # macOS
 picotool load hydra-keyboard.uf2 -f
 ```
 
-The build produces `hydra-keyboard.uf2` in the build directory.
+The build produces `hydra-keyboard.uf2` in the `firmware/pico/build/` directory.
 
 ### CMake configuration notes
 

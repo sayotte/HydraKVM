@@ -6,7 +6,7 @@ HydraKVM is three top-level components:
 
 - Hardware / firmware
   - **HDMI capture** - a commodify HDMI-to-USB dongle compatible with V4L
-  - **Pico** (`keyboard/`) — a USB HID keyboard that receives framed
+  - **Pico** (`firmware/pico/`) — a USB HID keyboard that receives framed
       `{modifier, keycode}` pairs over UART0 and replays them to a target machine.
       Working and validated.
 - The server
