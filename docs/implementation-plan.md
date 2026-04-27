@@ -77,16 +77,31 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
     }
 
     type Channel struct {
-      VideoIn VideoSource
-      KeyOut KeyEventSink
+      VideoIn  VideoSource
+      KeyOut   KeyEventSink
+      KbdState KeyboardState  // modifier bitmap, pressed-usage set, policy flags
+      // Channel owns a single goroutine that drains an unbuffered chan KeyEvent
+      // and calls KeyOut.ReportKeyEvent in order. Multiple Clients writing
+      // concurrently get serialized by the channel send; backpressure flows
+      // upstream to the WebSocket goroutine, which is the desired behavior.
+      // ...
+    }
+
+    type KeyboardState struct {
+      // modifier bitmap, pressed-usage set, etc.
       // ...
     }
 
     type Application struct {
+      // owns the Client<->Channel association:
+      //   map[*Channel]map[*Client]struct{}  (or equivalent)
+      // mutated atomically under a single Application-level lock during
+      // SwitchChannel. Clients themselves do not carry a current-channel
+      // pointer — Application is the single source of truth.
       // ...
     }
-    func (a *App) SwitchChannel(ctx context.Context, p SwitchChannelParams) (SwitchChannelResult, error)
-    func (a *App) RecordKeystroke(ctx context.Context, p KeystrokeParams) error)  
+    func (a *Application) SwitchChannel(ctx context.Context, p SwitchChannelParams) (SwitchChannelResult, error)
+    func (a *Application) RecordKeyEvent(ctx context.Context, p KeyEventParams) error
     ```
   - The Message types used throughout the system
     ```go
@@ -98,7 +113,7 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
 
     type SwitchChannelParams struct { /* ... */ }
     type SwitchChannelResult struct { /* ... */ }
-    type KeyEventParams     struct { /* ... */ }
+    type KeyEventParams      struct { /* ... */ }
     ```
   - Its interfaces
     ```go
