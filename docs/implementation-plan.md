@@ -1,6 +1,6 @@
 # HydraKVM — implementation plan
 
-Steps are ordered so every gate can be satisfied before the next step starts. Each step names the scope of what gets bWebclientlt and the verification that must pass before moving on.
+Steps are ordered so every gate can be satisfied before the next step starts. Each step names the scope of what gets built and the verification that must pass before moving on.
 
 ## Package dependency reference
 
@@ -12,9 +12,9 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
     - `internal/http/websocket`
     - `internal/http/web`
   - `internal/kvm`
-    - `internal/synthetic`
   - `internal/picolink`
   - `internal/v4l`
+  - `internal/synthetic`
 - `config` -> (none)
 - `auth` -> (none)
 - `internal/dispatch`
@@ -28,11 +28,13 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
   - `internal/kvm`
 - `internal/http/web`
   - `internal/http/websocket`
-- `internal/kvm`
-  - `internal/synthetic`
-- `internal/picolink` -> (none)
-- `internal/v4l` -> (none)
-- `internal/synthetic` -> (none)
+- `internal/kvm` -> (none)
+- `internal/picolink`
+  - `internal/kvm`
+- `internal/v4l`
+  - `internal/kvm`
+- `internal/synthetic`
+  - `internal/kvm`
 
 ## Order of implementation
 
@@ -42,6 +44,8 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
     ```go
     type StreamShape struct {
         Codec     string // "mjpeg", "h264"
+        MIMEType  string // "image/jpeg", "video/mp4; codecs=..."
+        Framing   string // "multipart" (per-frame Content-Type+Length, MJPEG style) | "continuous" (single response, frames concatenated, fMP4 style)
         Width     int
         Height    int
         Framerate int
@@ -55,11 +59,20 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
     }
 
     type KeyEvent struct {
+      // Code is a KeyboardEvent.code-style identifier (e.g. "KeyA", "ShiftLeft", "F11").
+      // Translation from Code to USB HID usage integers happens inside the KeyEventSink
+      // implementation (e.g. picolink). Application decides WHICH events to send and WHEN
+      // (state-machine: tracks held modifiers, decides whether a given browser event
+      // should produce an outbound KeyEvent at all, etc.). The KeyEventSink is told what
+      // to do; it doesn't decide.
+      Code string
+      Kind string // "down" | "up" | (later) "tap"
       // ...
     }
 
     type Client struct {
       VideoOut FrameSink
+      Outbound MessageWriter   // used by Application to push notifications back to this client
       // ...
     }
 
@@ -78,9 +91,9 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
   - The Message types used throughout the system
     ```go
     const (
-        MsgSwitchChannel = "switch_channel"
-        MsgKeyEvent     = "keyevent"
-        MsgWebclientUpdate      = "Webclient_update"
+        MsgSwitchChannel  = "switch_channel"
+        MsgKeyEvent       = "keyevent"
+        MsgClientUpdate   = "client_update"
     )
 
     type SwitchChannelParams struct { /* ... */ }
@@ -93,7 +106,7 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
       Shape() StreamShape
       InitData() []byte                 // SPS+PPS for h264, nil for mjpeg
       RequestKeyframe() error           // no-op for mjpeg; plausibly an ioctl for h264
-      Subscribe(ctx context.Context) <-chan Frame
+      Subscribe(ctx context.Context) <-chan VideoFrame
     }
 
     type FrameSink interface {
@@ -101,7 +114,18 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
     }
 
     type KeyEventSink interface {
+      // Receives abstract KeyEvents (Code strings + Kind) from Application and
+      // is responsible for translating them into whatever wire protocol drives
+      // the actual keyboard hardware (USB HID codes for picolink). Stateless
+      // with respect to "which keys are held" — that lives in Application.
       ReportKeyEvent(ke KeyEvent)
+    }
+
+    type MessageWriter interface {
+      // Used by Application to push notifications to a Client (e.g. "channel
+      // X went down, you've been switched to fallback"). For Webclients this is
+      // bridged to outbound WebSocket frames by http/websocket.Codec.
+      WriteMessage(msgType string, payload any) error
     }
     ```
 - `internal/dispatch`
@@ -124,7 +148,9 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
   func RegisterNotification[P any](r *Router, msgType string, fn func(context.Context, P) error)
   ```
 - Unit tests for both packages
-- Integration tests to show that calling Dispatch with a given Envelope invokes the expected Application method with the right params
+- Integration tests to show that:
+  - calling Dispatch with a given Envelope invokes the expected Application method with the right params
+  - two Clients driving the same Channel concurrently produce serialized, non-torn frames into the Channel's KeyEventSink (one writer per Channel, or equivalent), and per-Client state (held modifiers, etc.) does not bleed between clients
 
 ### Step 2: main executable and wiring stubs
 - `config`
@@ -199,31 +225,50 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
 - Define `http/websocket.Codec`
 - Implement channel-switch request from Webclient->Server
 - Implement keystroke-event sending from Webclient->Server
-- Implement client initiation flow: connect to server, get Webclient, Webclient phones home, server sends websocket URL, connects to websocket, Server dispatches NewClient
+- Implement Webclient initiation flow:
+  - Browser GETs the page; server returns the Webclient HTML/JS/CSS
+  - Webclient calls back to the server (HTTP); server returns a WebSocket URL
+  - Webclient connects to that WebSocket URL; server dispatches NewClient
+  - Server sends a message over the WebSocket containing the URL for the MJPEG video stream
+  - Webclient connects its `<img>` tag to that MJPEG URL
 - Implement `internal/synthetic` video stream
 - Implement NewClient in `kvm.Application`: connect Webclient to Channel with a `synthetic` video stream upon new client connection, and swap to new (perhaps random identity?) Channel upon channel switch
 - Implement keystroke-event sending, dispatching to `Application` (no decode at this point)
+- Webclient styling and structure: Tailwind CSS with recycled theme; semantic layout for the viewport, channel selector, control-sequence button row, and a connection-status indicator. No fancy animations; just an intentional-looking page.
+- Keyboard capture hardening:
+  - `keydown`/`keyup` listeners attached to `window` (or a focused capture element with `tabindex="0"`)
+  - `preventDefault()` on every captured event so the browser does not act on it locally
+  - Use `e.code` (physical key location) for Code values, not `e.key`
+  - Filter or expose `e.repeat === true` per a knob the spec for this step decides; default to forwarding so the target sees auto-repeat
+  - Call `navigator.keyboard.lock([...])` when the page enters fullscreen so chords like Tab/Escape can be captured on Chromium; silently skip on browsers that don't support it
+  - Visible focus indicator on the capture element so the user knows when keystrokes are being forwarded
+- Control-sequence buttons fire real events: each button (Ctrl-Alt-Del, Alt-Tab, Win, Esc, …) emits a sequence of `KeyEvent` messages — press events for each key, then release events in reverse order — using the same WS path as physical keystrokes. No special server opcode for canned sequences.
+- Channel selector: populated from a server-injected list (rendered into the page by `html/template`); switching dispatches `MsgSwitchChannel` over the WS.
+- Connection-status UI: shows current state (`connecting`, `connected`, `reconnecting`, `disconnected`), driven by WS lifecycle events and inbound `client_update` messages.
+- WebSocket reconnect with exponential backoff (capped); on reconnect, server treats it as a new Client (per the existing NewClient flow) — no resumption attempt in v1.
 - Add access-logs and logging of key HttpServer transitions and occurrences
 
-### Step 3: Working KeyEvent -> actual keyboard input flow
+### Step 4: Working KeyEvent -> actual keyboard input flow
 - Implement `picolink` writing: test harness can send a known sequence of USB HID reports that includes modifier keys with their down/up staggered around character inputs; requires manual verification
 - Implement decoding of keystroke events from websocket into `kvm` messages
 - Implement encoding of `kvm` messages into USB HID reports within the `picolink` package
 - Implement keystroke message dispatch and end-to-end keystroke sending: from Webclient to keyboard host
 - Add channel attach/detach logging, `picolink` failure logging, and logging of key Application transitions and occurrences
 
-### Step 4: Working Video
+### Step 5: Working Video
 - Implement `v4l` USB capture reading: test harness can grab frames and write to a file which can be played back manually
 - Implement `v4l` -> Webclient streaming; verify in-browser display behaves reasonably
 - Add `v4l` failure logging
+- Implement default-stream fallback: `main` injects a default `VideoSource` (in MVP, a `synthetic` "channel down" feed) into `kvm.Application` at startup. When a channel's real `VideoSource` reports failure (cable unplug, device error, read timeout), `Application` rewires the affected Channel's connected Clients to the injected default and pushes a notification through each Client's `MessageWriter` (`MsgClientUpdate` with a payload describing which channel went down). On recovery, `Application` rewires Clients back to the real source and pushes another notification. `kvm.Application` does not import `internal/synthetic` — the default is supplied as a `VideoSource` interface value.
+- Verification: manually unplug the HDMI dongle mid-stream; UI shows the fallback feed within one frame interval and a `client_update` message appears on the WebSocket. Replug; recovery without browser reconnect.
 
-### Step 5: Channel switching
+### Step 6: Channel switching
 - Implement multi-channel: `kvm.Application` only activates a channel for a Client after they send an initial channel-switch message selecting it
 - Implement basic channel switch: can switch between `synthetic` video channels
 - Implement USB channel switching: can switch between a USB channel and a `synthetic` channel; USB channels not being read from must be properly disconnected via v4l
 - Log channel switches
 
-### Step 6: Auth + Login
+### Step 7: Auth + Login
 - Implement local user database with ability to read and write per-user secrets stored using `golang.org/x/crypto/bcrypt`
 - Implement CLI parameter for creating/updating a user with password read from stdin
 - Create Webclient login page and HttpServer endpoint where Webclient must POST credentials
