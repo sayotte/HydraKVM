@@ -1,0 +1,26 @@
+# Builder image for HydraKVM web-client TypeScript / JavaScript operations.
+#
+# Preferred usage is via the wrapper script:
+#
+#   web/run.sh npm install
+#   web/run.sh npm run check
+#   web/run.sh npm run build
+#
+# The wrapper builds this image on first invocation. To rebuild manually:
+#
+#   podman build -t hydrakvm-web-builder web/
+#
+# The image deliberately does not bake project dependencies in. Dependencies
+# install into the mounted `node_modules/` so `package.json` /
+# `package-lock.json` is the single source of truth and the image stays small.
+
+FROM docker.io/library/node:22-alpine
+
+# git is needed by some npm packages that pull from git URLs at install time.
+RUN apk add --no-cache git
+
+WORKDIR /work
+
+# Default to a shell so the image is usable interactively too:
+#   podman run --rm -it -v "$PWD/web":/work hydrakvm-web-builder
+CMD ["sh"]

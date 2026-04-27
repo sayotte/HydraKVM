@@ -1,0 +1,5 @@
+---
+# Pinned style for HydraKVM firmware.
+# LLVM base; tweaks intentionally minimal.
+
+BasedOnStyle: LLVM

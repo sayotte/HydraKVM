@@ -1,0 +1,21 @@
+{
+  "name": "hydrakvm-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "HydraKVM web client (TypeScript). Compiled output is embedded into the Go server.",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "eslint": "^9.0.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

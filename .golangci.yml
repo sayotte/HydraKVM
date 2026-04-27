@@ -1,0 +1,55 @@
+# golangci-lint configuration for HydraKVM (v2 schema).
+#
+# Linter selection rationale: see CLAUDE.md "Quality" section. Cyclomatic-
+# complexity linters (gocyclo, gocognit, cyclop, maintidx, funlen) are
+# deliberately not enabled.
+
+version: "2"
+
+linters:
+  default: standard
+
+  enable:
+    - bodyclose
+    - copyloopvar
+    - depguard
+    - dupl
+    - fatcontext
+    - goconst
+    - gocritic
+    - godoclint
+    - gosec
+    - grouper
+    - intrange
+    - makezero
+    - nestif
+    - nilerr
+    - nonamedreturns
+    - nosprintfhostport
+    - perfsprint
+    - prealloc
+    - predeclared
+    - sloglint
+    - tparallel
+    - unconvert
+    - usestdlibvars
+    - wastedassign
+
+  settings:
+    depguard:
+      rules:
+        no-testify:
+          deny:
+            - pkg: github.com/stretchr/testify
+              desc: "testify is forbidden in this project; use the standard library testing package"
+
+    godoclint:
+      enable:
+        - pkg-doc
+        - require-pkg-doc
+        - require-stdlib-doclink
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
