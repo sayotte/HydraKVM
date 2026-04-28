@@ -1,2 +1,4 @@
 .vscode/*
 build/*
+server/internal/http/web/dist/*
+!server/internal/http/web/dist/.gitkeep

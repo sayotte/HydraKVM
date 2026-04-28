@@ -13,8 +13,8 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Package http hosts the HydraKVM web-facing HTTP server: static asset
-// serving, login, the WebSocket promotion endpoint, and the MJPEG stream
-// endpoint. Step 2 ships a stub that only blocks; real handlers arrive in
-// Step 3 and beyond.
+// Package http hosts the HydraKVM web-facing HTTP server: the embedded HTML
+// index, static asset serving, the WebSocket promotion endpoint, and the
+// dispatch loop that bridges WebSocket frames into the [internal/dispatch]
+// router. The MJPEG video endpoint is added in a later sub-step.
 package http

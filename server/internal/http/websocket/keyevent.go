@@ -13,20 +13,13 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package picolink
+package websocket
 
-import (
-	"testing"
-
-	"github.com/sayotte/hydrakvm/internal/kvm"
-)
-
-func TestKeyboardSatisfiesInterface(t *testing.T) {
-	var _ kvm.KeyEventSink = NewKeyboard("/dev/null")
-}
-
-func TestReportKeyEventDoesNotPanic(t *testing.T) {
-	k := NewKeyboard("/dev/null")
-	k.ReportKeyEvent(kvm.KeyEvent{Code: kvm.KeyA, Type: kvm.KeyTypeDown})
-	k.ReportKeyEvent(kvm.KeyEvent{Code: kvm.KeyA, Type: kvm.KeyTypeUp})
+// KeyEventParams is the wire shape for an inbound MsgKeyEvent payload.
+// The Go field names match W3C KeyboardEvent semantics (Type / Code) while
+// JSON tags match what the browser KeyboardEvent fields are named on the
+// wire.
+type KeyEventParams struct {
+	Type string `json:"type"` // W3C KeyboardEvent.type, e.g. "keyup" / "keydown"
+	Code string `json:"code"` // W3C KeyboardEvent.code, e.g. "KeyA" / "Enter"
 }

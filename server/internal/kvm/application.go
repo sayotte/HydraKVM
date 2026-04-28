@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -42,8 +43,16 @@ var (
 // hardware FDs (HDMI capture, serial port) are released while no Client is
 // watching, and gives Application a place to handle driver errors that the
 // Webclient can't act on.
+//
+// DefaultChannel, when non-nil, is auto-attached to every Client passed to
+// [Application.AddClient]. Wiring code (cmd/hydrakvm) must set it before
+// any client is registered; mutating it concurrently with AddClient is not
+// supported.
 type Application struct {
 	baseCtx context.Context
+
+	// DefaultChannel is attached to each new Client by AddClient when set.
+	DefaultChannel *Channel
 
 	mu sync.RWMutex
 
@@ -88,12 +97,51 @@ func (a *Application) AddChannel(id string, ch *Channel) {
 	a.channels[id] = ch
 }
 
-// AddClient registers c with no initial Channel attachment.
+// AddClient registers c. If [Application.DefaultChannel] is non-nil, c is
+// immediately attached to it (ref-counting that channel's goroutine), so that
+// new Clients can exercise the key/video paths without an explicit
+// SwitchChannel call.
 func (a *Application) AddClient(c *Client) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.clientChan[c] = nil
+	if a.DefaultChannel != nil {
+		a.attachLocked(c, a.DefaultChannel)
+	}
 }
+
+// ChannelInfo describes one registered Channel for enumeration by the HTTP
+// layer. Channel is exported so callers can resolve the *Channel for fan-out
+// without taking the Application lock.
+type ChannelInfo struct {
+	ID      string
+	Channel *Channel
+}
+
+// Channels returns the registered Channels in stable ID order, omitting the
+// reserved "__default__" channel which is not user-selectable.
+func (a *Application) Channels() []ChannelInfo {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	ids := make([]string, 0, len(a.channels))
+	for id := range a.channels {
+		if id == defaultChannelID {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]ChannelInfo, len(ids))
+	for i, id := range ids {
+		out[i] = ChannelInfo{ID: id, Channel: a.channels[id]}
+	}
+	return out
+}
+
+// defaultChannelID is the reserved registry key under which wiring code
+// stores [Application.DefaultChannel] so it benefits from the standard
+// AddChannel path while remaining hidden from user-facing channel lists.
+const defaultChannelID = "__default__"
 
 // RemoveClient detaches c from any Channel and forgets it. If c was the
 // last Client on its Channel, the Channel's goroutine is stopped.
@@ -144,11 +192,11 @@ func (a *Application) SwitchChannel(ctx context.Context, p SwitchChannelParams) 
 	return SwitchChannelResult(p), nil
 }
 
-// RecordKeyEvent forwards p as a [KeyEvent] to the Channel currently
-// attached to the Client in ctx. Send blocks until the Channel's drainer
-// accepts it (or ctx is cancelled); backpressure from a slow sink
-// propagates upstream to the dispatcher's caller.
-func (a *Application) RecordKeyEvent(ctx context.Context, p KeyEventParams) error {
+// RecordKeyEvent forwards ke to the Channel currently attached to the Client
+// in ctx. Send blocks until the Channel's drainer accepts it (or ctx is
+// cancelled); backpressure from a slow sink propagates upstream to the
+// dispatcher's caller.
+func (a *Application) RecordKeyEvent(ctx context.Context, ke KeyEvent) error {
 	c := ClientFromContext(ctx)
 	if c == nil {
 		return ErrNoClient
@@ -162,7 +210,7 @@ func (a *Application) RecordKeyEvent(ctx context.Context, p KeyEventParams) erro
 	if ch == nil {
 		return ErrNoActiveChannel
 	}
-	return ch.SendKeyEvent(ctx, KeyEvent(p))
+	return ch.SendKeyEvent(ctx, ke)
 }
 
 // attachLocked adds c to ch's client set, starting ch's goroutine if c is

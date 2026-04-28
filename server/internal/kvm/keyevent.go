@@ -16,11 +16,11 @@
 package kvm
 
 // KeyEvent is a single edge transition decided by the Application and handed
-// to a KeyEventSink. Code uses KeyboardEvent.code identifiers ("KeyA",
-// "ShiftLeft", "F11"); translation to USB HID usages is the sink's job.
+// to a KeyEventSink. It carries the canonical kvm-side enums; wire-side
+// string parsing happens upstream via a [KeyEventTranslator].
 type KeyEvent struct {
-	Code string
-	Kind string // "down" | "up"
+	Code KeyCode
+	Type KeyType
 }
 
 // KeyboardState tracks the per-Channel keyboard view: held modifiers, the set

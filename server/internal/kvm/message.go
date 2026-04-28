@@ -35,12 +35,6 @@ type SwitchChannelResult struct {
 	ChannelID string `json:"channel_id"`
 }
 
-// KeyEventParams is the inbound payload for [MsgKeyEvent].
-type KeyEventParams struct {
-	Code string `json:"code"`
-	Kind string `json:"kind"`
-}
-
 // ClientUpdateParams is the outbound payload for [MsgClientUpdate]
 // notifications pushed from Application to a Client.
 type ClientUpdateParams struct {

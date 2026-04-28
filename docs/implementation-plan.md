@@ -66,7 +66,7 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
       // should produce an outbound KeyEvent at all, etc.). The KeyEventSink is told what
       // to do; it doesn't decide.
       Code string
-      Kind string // "down" | "up" | (later) "tap"
+      Type string // "down" | "up" | (later) "tap"
       // ...
     }
 
@@ -138,7 +138,7 @@ Steps are ordered so every gate can be satisfied before the next step starts. Ea
     }
 
     type KeyEventSink interface {
-      // Receives abstract KeyEvents (Code strings + Kind) from Application and
+      // Receives abstract KeyEvents (Code strings + Type) from Application and
       // is responsible for translating them into whatever wire protocol drives
       // the actual keyboard hardware (USB HID codes for picolink). Stateless
       // with respect to "which keys are held" — that lives in Application.

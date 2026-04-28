@@ -154,7 +154,7 @@ func TestRecordKeyEventNoActiveChannel(t *testing.T) {
 	app.AddClient(c)
 	ctx := WithClient(t.Context(), c)
 
-	err := app.RecordKeyEvent(ctx, KeyEventParams{Code: "KeyA", Kind: "down"})
+	err := app.RecordKeyEvent(ctx, KeyEvent{Code: KeyA, Type: KeyTypeDown})
 	if !errors.Is(err, ErrNoActiveChannel) {
 		t.Errorf("got %v want ErrNoActiveChannel", err)
 	}
@@ -165,9 +165,47 @@ func TestRecordKeyEventUnknownClient(t *testing.T) {
 	c := &Client{} // not registered
 	ctx := WithClient(t.Context(), c)
 
-	err := app.RecordKeyEvent(ctx, KeyEventParams{Code: "KeyA", Kind: "down"})
+	err := app.RecordKeyEvent(ctx, KeyEvent{Code: KeyA, Type: KeyTypeDown})
 	if !errors.Is(err, ErrUnknownClient) {
 		t.Errorf("got %v want ErrUnknownClient", err)
+	}
+}
+
+func TestAddClientAutoAttachesToDefaultChannel(t *testing.T) {
+	app := NewApplication(t.Context())
+	ch := NewChannel(nil, nil)
+	app.AddChannel("__default__", ch)
+	app.DefaultChannel = ch
+
+	c := &Client{}
+	app.AddClient(c)
+
+	if got := app.ChannelOf(c); got != ch {
+		t.Errorf("ChannelOf: got %p want %p", got, ch)
+	}
+	if !app.IsChannelRunning(ch) {
+		t.Error("expected default channel to be running after AddClient")
+	}
+}
+
+func TestApplicationChannelsListsRegisteredExceptDefault(t *testing.T) {
+	app := NewApplication(t.Context())
+	chDef := NewChannel(nil, nil)
+	chA := NewChannel(nil, nil)
+	chB := NewChannel(nil, nil)
+	app.AddChannel("__default__", chDef)
+	app.AddChannel("b", chB)
+	app.AddChannel("a", chA)
+
+	got := app.Channels()
+	if len(got) != 2 {
+		t.Fatalf("Channels len: got %d want 2", len(got))
+	}
+	if got[0].ID != "a" || got[1].ID != "b" {
+		t.Errorf("Channels order: got %q,%q want a,b", got[0].ID, got[1].ID)
+	}
+	if got[0].Channel != chA || got[1].Channel != chB {
+		t.Error("Channels did not return matching *Channel pointers")
 	}
 }
 
@@ -178,7 +216,7 @@ func TestRemoveClient(t *testing.T) {
 	app.RemoveClient(c)
 
 	ctx := WithClient(t.Context(), c)
-	err := app.RecordKeyEvent(ctx, KeyEventParams{Code: "KeyA", Kind: "down"})
+	err := app.RecordKeyEvent(ctx, KeyEvent{Code: KeyA, Type: KeyTypeDown})
 	if !errors.Is(err, ErrUnknownClient) {
 		t.Errorf("got %v want ErrUnknownClient after RemoveClient", err)
 	}

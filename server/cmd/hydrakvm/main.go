@@ -22,24 +22,33 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	nethttp "net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
 	"github.com/sayotte/hydrakvm/internal/auth"
 	"github.com/sayotte/hydrakvm/internal/config"
 	"github.com/sayotte/hydrakvm/internal/dispatch"
 	hkhttp "github.com/sayotte/hydrakvm/internal/http"
+	wsockt "github.com/sayotte/hydrakvm/internal/http/websocket"
 	"github.com/sayotte/hydrakvm/internal/kvm"
 	"github.com/sayotte/hydrakvm/internal/picolink"
 	"github.com/sayotte/hydrakvm/internal/synthetic"
 )
 
-const defaultConfigPath = "/etc/hydrakvm/config.yaml"
+const (
+	defaultConfigPath = "/etc/hydrakvm/config.yaml"
+	shutdownTimeout   = 10 * time.Second
+)
 
 func main() {
 	cfgPath := flag.String("config", defaultConfigPath, "path to the HydraKVM YAML configuration file")
@@ -67,6 +76,8 @@ func run(cfgPath string) error {
 		return fmt.Errorf("config invalid: %w", errors.Join(errs...))
 	}
 
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
 	authProvider, err := newAuthProvider(cfg.Auth)
 	if err != nil {
 		return err
@@ -81,11 +92,43 @@ func run(cfgPath string) error {
 		app.AddChannel(chCfg.Name, ch)
 	}
 
+	defaultCh := kvm.NewChannel(synthetic.NewVideoSource(), picolink.NewKeyboard(""))
+	app.AddChannel("__default__", defaultCh)
+	app.DefaultChannel = defaultCh
+
+	tr := wsockt.NewW3CKeyEventTranslator()
 	router := dispatch.NewRouter()
 	dispatch.Register(router, kvm.MsgSwitchChannel, app.SwitchChannel)
-	dispatch.RegisterNotification(router, kvm.MsgKeyEvent, app.RecordKeyEvent)
+	router.Handle(kvm.MsgKeyEvent, func(ctx context.Context, payload json.RawMessage) (any, error) {
+		var p wsockt.KeyEventParams
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return nil, fmt.Errorf("decode key event: %w", err)
+		}
+		code, ok := tr.ParseKeyCode(p.Code)
+		if !ok {
+			return nil, fmt.Errorf("unknown key code %q", p.Code)
+		}
+		typ, ok := tr.ParseKeyType(p.Type)
+		if !ok {
+			return nil, fmt.Errorf("unknown key type %q", p.Type)
+		}
+		return nil, app.RecordKeyEvent(ctx, kvm.KeyEvent{Code: code, Type: typ})
+	})
 
-	server := hkhttp.NewServer(cfg.HTTP, authProvider, router)
+	server, err := hkhttp.NewServer(cfg.HTTP, authProvider, router, app, logger)
+	if err != nil {
+		return err
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
 		return err
 	}

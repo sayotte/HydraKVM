@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<h1>{{.Title}}</h1>
+<select id="channel-selector">
+{{range .Channels}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+</select>
+<div id="status"></div>
+<div id="control-sequences"></div>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

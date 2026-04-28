@@ -13,20 +13,28 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package picolink
+package websocket
 
 import (
+	"encoding/json"
 	"testing"
-
-	"github.com/sayotte/hydrakvm/internal/kvm"
 )
 
-func TestKeyboardSatisfiesInterface(t *testing.T) {
-	var _ kvm.KeyEventSink = NewKeyboard("/dev/null")
-}
-
-func TestReportKeyEventDoesNotPanic(t *testing.T) {
-	k := NewKeyboard("/dev/null")
-	k.ReportKeyEvent(kvm.KeyEvent{Code: kvm.KeyA, Type: kvm.KeyTypeDown})
-	k.ReportKeyEvent(kvm.KeyEvent{Code: kvm.KeyA, Type: kvm.KeyTypeUp})
+func TestKeyEventParamsMarshal(t *testing.T) {
+	in := KeyEventParams{Type: "keydown", Code: "KeyA"}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	const want = `{"type":"keydown","code":"KeyA"}`
+	if string(b) != want {
+		t.Fatalf("Marshal = %s, want %s", b, want)
+	}
+	var out KeyEventParams
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out != in {
+		t.Fatalf("round-trip = %+v, want %+v", out, in)
+	}
 }

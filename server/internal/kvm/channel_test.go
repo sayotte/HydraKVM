@@ -60,9 +60,9 @@ func TestChannelRunDeliversInOrder(t *testing.T) {
 	go ch.Run(ctx)
 
 	want := []KeyEvent{
-		{Code: "KeyA", Kind: "down"},
-		{Code: "KeyA", Kind: "up"},
-		{Code: "KeyB", Kind: "down"},
+		{Code: KeyA, Type: KeyTypeDown},
+		{Code: KeyA, Type: KeyTypeUp},
+		{Code: KeyB, Type: KeyTypeDown},
 	}
 	for _, ke := range want {
 		if err := ch.SendKeyEvent(ctx, ke); err != nil {
@@ -71,7 +71,7 @@ func TestChannelRunDeliversInOrder(t *testing.T) {
 	}
 
 	// Drain: send a sentinel to ensure prior events were processed.
-	if err := ch.SendKeyEvent(ctx, KeyEvent{Code: "Sentinel", Kind: "down"}); err != nil {
+	if err := ch.SendKeyEvent(ctx, KeyEvent{Code: KeyZ, Type: KeyTypeDown}); err != nil {
 		t.Fatalf("sentinel SendKeyEvent: %v", err)
 	}
 	// After SendKeyEvent for the sentinel returns, the drainer has read it
@@ -106,7 +106,7 @@ func TestChannelSendKeyEventRespectsContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := ch.SendKeyEvent(ctx, KeyEvent{Code: "KeyA", Kind: "down"})
+	err := ch.SendKeyEvent(ctx, KeyEvent{Code: KeyA, Type: KeyTypeDown})
 	if err == nil {
 		t.Fatal("expected error when context is cancelled before send")
 	}

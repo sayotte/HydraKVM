@@ -13,20 +13,11 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package picolink
-
-import (
-	"testing"
-
-	"github.com/sayotte/hydrakvm/internal/kvm"
-)
-
-func TestKeyboardSatisfiesInterface(t *testing.T) {
-	var _ kvm.KeyEventSink = NewKeyboard("/dev/null")
-}
-
-func TestReportKeyEventDoesNotPanic(t *testing.T) {
-	k := NewKeyboard("/dev/null")
-	k.ReportKeyEvent(kvm.KeyEvent{Code: kvm.KeyA, Type: kvm.KeyTypeDown})
-	k.ReportKeyEvent(kvm.KeyEvent{Code: kvm.KeyA, Type: kvm.KeyTypeUp})
-}
+// Package websocket holds the WebSocket framing and wire-content definitions
+// for HydraKVM. It provides a [Codec] that reads and writes JSON envelopes
+// over a single WebSocket connection, the wire-side [KeyEventParams] shape
+// describing inbound key events, and [W3CKeyEventTranslator] which implements
+// kvm.KeyEventTranslator for browser-supplied W3C KeyboardEvent strings. The
+// package depends only on the standard library, github.com/coder/websocket,
+// and internal/kvm.
+package websocket

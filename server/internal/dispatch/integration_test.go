@@ -125,11 +125,14 @@ func TestTwoClientsConcurrentlyDriveOneChannelSerialized(t *testing.T) {
 	}
 
 	r := dispatch.NewRouter()
+	// Until sub-step 2 lands the wire-side translator, the test routes a
+	// post-translation kvm.KeyEvent through the dispatcher to exercise the
+	// same Application path the real handler will use.
 	dispatch.RegisterNotification(r, kvm.MsgKeyEvent, app.RecordKeyEvent)
 
 	const eventsPerClient = 200
-	send := func(ctx context.Context, code string) {
-		payload, err := json.Marshal(kvm.KeyEventParams{Code: code, Kind: "down"})
+	send := func(ctx context.Context, code kvm.KeyCode) {
+		payload, err := json.Marshal(kvm.KeyEvent{Code: code, Type: kvm.KeyTypeDown})
 		if err != nil {
 			t.Errorf("marshal: %v", err)
 			return
@@ -150,7 +153,7 @@ func TestTwoClientsConcurrentlyDriveOneChannelSerialized(t *testing.T) {
 		defer wg.Done()
 		ctx := kvm.WithClient(t.Context(), cA)
 		for range eventsPerClient {
-			send(ctx, "KeyA")
+			send(ctx, kvm.KeyA)
 			sentA.Add(1)
 		}
 	}()
@@ -158,7 +161,7 @@ func TestTwoClientsConcurrentlyDriveOneChannelSerialized(t *testing.T) {
 		defer wg.Done()
 		ctx := kvm.WithClient(t.Context(), cB)
 		for range eventsPerClient {
-			send(ctx, "KeyB")
+			send(ctx, kvm.KeyB)
 			sentB.Add(1)
 		}
 	}()
@@ -191,12 +194,12 @@ func TestTwoClientsConcurrentlyDriveOneChannelSerialized(t *testing.T) {
 	var nA, nB int
 	for _, ev := range sink.events {
 		switch ev.Code {
-		case "KeyA":
+		case kvm.KeyA:
 			nA++
-		case "KeyB":
+		case kvm.KeyB:
 			nB++
 		default:
-			t.Errorf("unexpected event code %q", ev.Code)
+			t.Errorf("unexpected event code %d", ev.Code)
 		}
 	}
 	if nA != eventsPerClient || nB != eventsPerClient {
