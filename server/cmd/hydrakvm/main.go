@@ -92,7 +92,7 @@ func run(cfgPath string) error {
 		app.AddChannel(chCfg.Name, ch)
 	}
 
-	defaultCh := kvm.NewChannel(synthetic.NewVideoSource(), picolink.NewKeyboard(""))
+	defaultCh := kvm.NewChannel(synthetic.NewVideoSource("No Channel Selected"), picolink.NewKeyboard(""))
 	app.AddChannel("__default__", defaultCh)
 	app.DefaultChannel = defaultCh
 
@@ -148,7 +148,7 @@ func newChannel(cfg config.ChannelConfig) (*kvm.Channel, error) {
 	var vs kvm.VideoSource
 	switch cfg.Video.Type {
 	case "synthetic":
-		vs = synthetic.NewVideoSource()
+		vs = synthetic.NewVideoSource(cfg.Name)
 	default:
 		return nil, fmt.Errorf("unknown video source type %q", cfg.Video.Type)
 	}

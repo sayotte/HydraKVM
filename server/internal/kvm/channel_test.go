@@ -18,6 +18,7 @@ package kvm
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -96,6 +97,136 @@ func TestChannelRunDeliversInOrder(t *testing.T) {
 		if sink.events[i] != ke {
 			t.Errorf("event %d: got %+v want %+v", i, sink.events[i], ke)
 		}
+	}
+}
+
+// fakeVideoSource emits a fixed VideoFrame on a tick.
+type fakeVideoSource struct {
+	interval time.Duration
+}
+
+func (f *fakeVideoSource) Shape() StreamShape     { return StreamShape{Codec: "mjpeg"} }
+func (f *fakeVideoSource) InitData() []byte       { return nil }
+func (f *fakeVideoSource) RequestKeyframe() error { return nil }
+func (f *fakeVideoSource) Subscribe(ctx context.Context) <-chan VideoFrame {
+	ch := make(chan VideoFrame, 1)
+	go func() {
+		defer close(ch)
+		t := time.NewTicker(f.interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				select {
+				case ch <- VideoFrame{Data: []byte{0xFF}, IsKey: true}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return ch
+}
+
+type countingSink struct {
+	n atomic.Int32
+}
+
+func (s *countingSink) WriteFrame(_ VideoFrame) { s.n.Add(1) }
+
+// boundedSink simulates the FrameSink contract: WriteFrame is non-blocking;
+// when its internal buffer is full, frames are dropped. Used to verify that a
+// slow consumer of the sink does not block the channel's video pump.
+type boundedSink struct {
+	frames  chan VideoFrame
+	dropped atomic.Int32
+}
+
+func newBoundedSink(capacity int) *boundedSink {
+	return &boundedSink{frames: make(chan VideoFrame, capacity)}
+}
+
+func (s *boundedSink) WriteFrame(vf VideoFrame) {
+	select {
+	case s.frames <- vf:
+	default:
+		s.dropped.Add(1)
+	}
+}
+
+func TestChannelPumpsFramesToRegisteredClients(t *testing.T) {
+	src := &fakeVideoSource{interval: 5 * time.Millisecond}
+	ch := NewChannel(src, nil)
+
+	s1, s2 := &countingSink{}, &countingSink{}
+	c1 := &Client{}
+	c1.SetVideoOut(s1)
+	c2 := &Client{}
+	c2.SetVideoOut(s2)
+	ch.RegisterClient(c1)
+	ch.RegisterClient(c2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		ch.Run(ctx)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if s1.n.Load() > 0 && s2.n.Load() > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	if s1.n.Load() == 0 || s2.n.Load() == 0 {
+		t.Errorf("sinks: s1=%d s2=%d; want both > 0", s1.n.Load(), s2.n.Load())
+	}
+}
+
+func TestChannelDropsFramesForSaturatedSink(t *testing.T) {
+	src := &fakeVideoSource{interval: 2 * time.Millisecond}
+	ch := NewChannel(src, nil)
+
+	// Sink with capacity 1 and a consumer that never reads — drops should
+	// accumulate without affecting the other sink's pace.
+	saturated := newBoundedSink(1)
+	healthy := newBoundedSink(64)
+	cs := &Client{}
+	cs.SetVideoOut(saturated)
+	ch.RegisterClient(cs)
+	ch2 := &Client{}
+	ch2.SetVideoOut(healthy)
+	ch.RegisterClient(ch2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		ch.Run(ctx)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if saturated.dropped.Load() > 0 && len(healthy.frames) >= 3 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	if saturated.dropped.Load() == 0 {
+		t.Error("expected saturated sink to drop frames")
+	}
+	if len(healthy.frames) < 3 {
+		t.Errorf("healthy sink only got %d frames", len(healthy.frames))
 	}
 }
 

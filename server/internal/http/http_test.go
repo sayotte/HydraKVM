@@ -183,6 +183,12 @@ func TestWSRoundTripSwitchChannel(t *testing.T) {
 	}
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "test done") }()
 
+	// Consume the unsolicited mjpeg_url envelope pushed by the server
+	// immediately after upgrade.
+	if _, _, err := conn.Read(ctx); err != nil {
+		t.Fatalf("ws read mjpeg_url: %v", err)
+	}
+
 	env := dispatch.Envelope{Type: kvm.MsgSwitchChannel, ID: "test-1", Payload: json.RawMessage(`{"channel_id":"ch1"}`)}
 	b, _ := json.Marshal(env)
 	if err := conn.Write(ctx, websocket.MessageText, b); err != nil {

@@ -53,6 +53,11 @@ type connectResponse struct {
 	WSURL string `json:"ws_url"`
 }
 
+// streamPathPrefix is the URL prefix under which mjpeg stream tokens are
+// served. Kept as a constant so it stays in lockstep between the WebSocket
+// handler (which mints the URL) and the stream handler.
+const streamPathPrefix = "/stream/"
+
 func (s *Server) handleAPIConnect(w nethttp.ResponseWriter, _ *nethttp.Request) {
 	tok, err := s.tokens.mint()
 	if err != nil {
@@ -85,11 +90,25 @@ func (s *Server) handleWS(w nethttp.ResponseWriter, r *nethttp.Request) {
 	client := &kvm.Client{Outbound: codec}
 	s.App.AddClient(client)
 
+	streamTok, err := s.streams.mint(client)
+	if err != nil {
+		s.Logger.Error("stream token mint", "err", err)
+		s.App.RemoveClient(client)
+		_ = codec.Close("server done")
+		return
+	}
+
 	defer func() {
+		s.streams.release(client)
 		s.App.RemoveClient(client)
 		_ = codec.Close("server done")
 		s.Logger.Info("ws disconnected", "remote_addr", r.RemoteAddr)
 	}()
+
+	if err := codec.WriteMessage(kvm.MsgMJPEGURL, kvm.MJPEGURLParams{URL: streamPathPrefix + streamTok}); err != nil {
+		s.Logger.Warn("ws push mjpeg url", "err", err)
+		return
+	}
 
 	s.runDispatchLoop(r.Context(), codec, client)
 }

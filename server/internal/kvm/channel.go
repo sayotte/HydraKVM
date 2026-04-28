@@ -15,7 +15,10 @@
 
 package kvm
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 // Channel binds one VideoSource and one KeyEventSink to a per-Channel
 // KeyboardState. Multiple Clients may drive the same Channel concurrently;
@@ -24,12 +27,19 @@ import "context"
 // [Channel.SendKeyEvent] (in production, the WebSocket reader goroutine via
 // the dispatcher), which is the desired behavior — a wedged USB serial write
 // should slow the offending Client, not silently grow a queue.
+//
+// Channel.Run also fans out frames from VideoIn to every attached Client's
+// VideoOut FrameSink. WriteFrame calls are non-blocking by FrameSink contract:
+// a slow client drops frames, never blocks other clients or the channel pump.
 type Channel struct {
 	VideoIn  VideoSource
 	KeyOut   KeyEventSink
 	KbdState KeyboardState
 
 	keyCh chan KeyEvent
+
+	mu      sync.RWMutex
+	clients map[*Client]struct{}
 }
 
 // NewChannel constructs a Channel. In production, [Application] launches
@@ -40,17 +50,43 @@ func NewChannel(vs VideoSource, ks KeyEventSink) *Channel {
 		VideoIn: vs,
 		KeyOut:  ks,
 		keyCh:   make(chan KeyEvent),
+		clients: make(map[*Client]struct{}),
 	}
 }
 
+// RegisterClient adds c to the set receiving fan-out video frames while this
+// Channel is running. Idempotent.
+func (c *Channel) RegisterClient(cl *Client) {
+	c.mu.Lock()
+	c.clients[cl] = struct{}{}
+	c.mu.Unlock()
+}
+
+// UnregisterClient removes c from the fan-out set. Idempotent.
+func (c *Channel) UnregisterClient(cl *Client) {
+	c.mu.Lock()
+	delete(c.clients, cl)
+	c.mu.Unlock()
+}
+
 // Run drains the Channel's key-event queue and dispatches each event to the
-// KeyEventSink in arrival order. Returns when ctx is cancelled. There is
-// exactly one Run goroutine per Channel; serialization is enforced by that
+// KeyEventSink in arrival order; in parallel it pumps frames from VideoIn to
+// every registered Client. Returns when ctx is cancelled. There is exactly
+// one Run goroutine per Channel; key-event serialization is enforced by the
 // single drainer plus the unbuffered queue on the producer side.
 func (c *Channel) Run(ctx context.Context) {
+	var wg sync.WaitGroup
+	if c.VideoIn != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.runVideoPump(ctx)
+		}()
+	}
 	for {
 		select {
 		case <-ctx.Done():
+			wg.Wait()
 			return
 		case ke := <-c.keyCh:
 			if c.KeyOut != nil {
@@ -58,6 +94,31 @@ func (c *Channel) Run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (c *Channel) runVideoPump(ctx context.Context) {
+	frames := c.VideoIn.Subscribe(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case vf, ok := <-frames:
+			if !ok {
+				return
+			}
+			c.fanout(vf)
+		}
+	}
+}
+
+func (c *Channel) fanout(vf VideoFrame) {
+	c.mu.RLock()
+	for cl := range c.clients {
+		if sink := cl.VideoOut(); sink != nil {
+			sink.WriteFrame(vf)
+		}
+	}
+	c.mu.RUnlock()
 }
 
 // SendKeyEvent enqueues a KeyEvent for serialized delivery to the Channel's

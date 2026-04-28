@@ -15,14 +15,39 @@
 
 package kvm
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // Client is one connected user (one browser tab). It is a passive bag of
 // sinks; the Client-to-Channel association is owned by Application, not by
 // the Client itself.
+//
+// The video sink is installed/cleared asynchronously by the HTTP layer when
+// an MJPEG connection arrives or drops; reads (Channel video pump) are
+// coordinated via [atomic.Pointer].
 type Client struct {
-	VideoOut FrameSink
+	videoOut atomic.Pointer[FrameSink]
 	Outbound MessageWriter
+}
+
+// SetVideoOut installs s as the Client's frame sink (or clears it when s is
+// nil). Safe for concurrent use with the Channel video pump.
+func (c *Client) SetVideoOut(s FrameSink) {
+	if s == nil {
+		c.videoOut.Store(nil)
+		return
+	}
+	c.videoOut.Store(&s)
+}
+
+// VideoOut returns the currently installed frame sink, or nil if none.
+func (c *Client) VideoOut() FrameSink {
+	if p := c.videoOut.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 // ctxKey is an unexported type to avoid collisions with other packages'

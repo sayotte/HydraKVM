@@ -20,6 +20,8 @@ import (
 	"encoding/base64"
 	"sync"
 	"time"
+
+	"github.com/sayotte/hydrakvm/internal/kvm"
 )
 
 const tokenTTL = 30 * time.Second
@@ -71,6 +73,55 @@ func (r *tokenRegistry) sweepLocked() {
 	cutoff := r.now().Add(-tokenTTL)
 	for tok, issued := range r.tokens {
 		if issued.Before(cutoff) {
+			delete(r.tokens, tok)
+		}
+	}
+}
+
+// streamRegistry holds a token -> *kvm.Client mapping for the /stream/{token}
+// endpoint. Tokens are minted by the WebSocket handler after a Client is
+// registered with the Application; the stream handler looks the Client up to
+// install its mjpegSink as VideoOut. Single-use, no TTL: the token is alive
+// for the lifetime of the WS connection.
+type streamRegistry struct {
+	mu     sync.Mutex
+	tokens map[string]*kvm.Client
+}
+
+func newStreamRegistry() *streamRegistry {
+	return &streamRegistry{tokens: make(map[string]*kvm.Client)}
+}
+
+func (r *streamRegistry) mint(c *kvm.Client) (string, error) {
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	tok := base64.RawURLEncoding.EncodeToString(buf[:])
+	r.mu.Lock()
+	r.tokens[tok] = c
+	r.mu.Unlock()
+	return tok, nil
+}
+
+func (r *streamRegistry) consume(token string) (*kvm.Client, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.tokens[token]
+	if !ok {
+		return nil, false
+	}
+	delete(r.tokens, token)
+	return c, true
+}
+
+// release removes any pending token for c without consuming it (e.g. on WS
+// disconnect before /stream/ is hit).
+func (r *streamRegistry) release(c *kvm.Client) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for tok, cl := range r.tokens {
+		if cl == c {
 			delete(r.tokens, tok)
 		}
 	}

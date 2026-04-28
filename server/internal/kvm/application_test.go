@@ -18,6 +18,7 @@ package kvm
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestSwitchChannelRequiresClient(t *testing.T) {
@@ -206,6 +207,64 @@ func TestApplicationChannelsListsRegisteredExceptDefault(t *testing.T) {
 	}
 	if got[0].Channel != chA || got[1].Channel != chB {
 		t.Error("Channels did not return matching *Channel pointers")
+	}
+}
+
+func TestAttachRegistersClientForVideo(t *testing.T) {
+	app := NewApplication(t.Context())
+	src := &fakeVideoSource{interval: 5 * time.Millisecond}
+	ch := NewChannel(src, nil)
+	app.AddChannel("ch1", ch)
+
+	sink := &countingSink{}
+	c := &Client{}
+	c.SetVideoOut(sink)
+	app.AddClient(c)
+
+	if _, err := app.SwitchChannel(WithClient(t.Context(), c), SwitchChannelParams{ChannelID: "ch1"}); err != nil {
+		t.Fatalf("SwitchChannel: %v", err)
+	}
+	defer app.RemoveClient(c)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if sink.n.Load() > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("client received no frames after attach (got %d)", sink.n.Load())
+}
+
+func TestDetachUnregistersClientFromVideo(t *testing.T) {
+	app := NewApplication(t.Context())
+	src := &fakeVideoSource{interval: 5 * time.Millisecond}
+	ch := NewChannel(src, nil)
+	app.AddChannel("ch1", ch)
+
+	sink := &countingSink{}
+	c := &Client{}
+	c.SetVideoOut(sink)
+	app.AddClient(c)
+	if _, err := app.SwitchChannel(WithClient(t.Context(), c), SwitchChannelParams{ChannelID: "ch1"}); err != nil {
+		t.Fatalf("SwitchChannel: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if sink.n.Load() > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	app.RemoveClient(c)
+	time.Sleep(50 * time.Millisecond)
+	before := sink.n.Load()
+	time.Sleep(50 * time.Millisecond)
+	after := sink.n.Load()
+	if after != before {
+		t.Errorf("client received %d frames after detach", after-before)
 	}
 }
 

@@ -226,6 +226,7 @@ func (a *Application) attachLocked(c *Client, ch *Channel) {
 	}
 	set[c] = struct{}{}
 	a.clientChan[c] = ch
+	ch.RegisterClient(c)
 }
 
 // detachLocked removes c from its current Channel (if any), stopping the
@@ -236,6 +237,7 @@ func (a *Application) detachLocked(c *Client) {
 	if ch == nil {
 		return
 	}
+	ch.UnregisterClient(c)
 	set := a.channelClients[ch]
 	delete(set, c)
 	a.clientChan[c] = nil

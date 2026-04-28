@@ -22,7 +22,15 @@ const (
 	MsgSwitchChannel = "switch_channel"
 	MsgKeyEvent      = "keyevent"
 	MsgClientUpdate  = "client_update"
+	MsgMJPEGURL      = "mjpeg_url"
 )
+
+// MJPEGURLParams is the outbound payload for [MsgMJPEGURL] notifications,
+// pushed by the WebSocket handler immediately after upgrade so the browser can
+// point its long-lived <img> at the multipart MJPEG endpoint.
+type MJPEGURLParams struct {
+	URL string `json:"url"`
+}
 
 // SwitchChannelParams is the inbound payload for [MsgSwitchChannel].
 type SwitchChannelParams struct {

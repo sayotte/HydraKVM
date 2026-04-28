@@ -52,6 +52,7 @@ type Server struct {
 	indexTmpl *template.Template
 	staticFS  fs.FS
 	tokens    *tokenRegistry
+	streams   *streamRegistry
 }
 
 // NewServer constructs a Server. Parses the index template eagerly; an
@@ -85,12 +86,14 @@ func NewServer(
 		indexTmpl:  tmpl,
 		staticFS:   sfs,
 		tokens:     newTokenRegistry(),
+		streams:    newStreamRegistry(),
 	}
 
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /api/connect", s.handleAPIConnect)
 	mux.HandleFunc("GET /ws/{token}", s.handleWS)
+	mux.HandleFunc("GET /stream/{token}", s.handleStream)
 	mux.Handle("GET /static/", nethttp.StripPrefix("/static/", nethttp.FileServer(nethttp.FS(sfs))))
 
 	s.netServer = &nethttp.Server{
