@@ -16,13 +16,21 @@
 set -euo pipefail
 
 dir="$(cd "$(dirname "$0")" && pwd)"
+repo_root="$(cd "$dir/.." && pwd)"
 image="hydrakvm-web-builder"
 
 if ! podman image exists "$image"; then
   podman build -t "$image" "$dir"
 fi
 
-flags=(--rm -v "$dir":/work)
+# Mount the web/ source as /work (so npm sees package.json / node_modules
+# in the expected location) and the server's embed target so the build can
+# emit dist/ artifacts directly to the embed path.
+flags=(
+  --rm
+  -v "$dir":/work
+  -v "$repo_root/server/internal/http/web/dist":/server/internal/http/web/dist
+)
 [ -t 0 ] && flags+=(-i)
 [ -t 1 ] && flags+=(-t)
 
