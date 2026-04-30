@@ -27,6 +27,8 @@
 #include "bsp/board.h"
 #include "tusb.h"
 
+#include "helper.h"
+
 #define HID_REPORT_TIMEOUT_US  10000   // 10ms — ~10 USB frames
 #define WATCHDOG_TIMEOUT_MS    5000
 #define UART_BAUDRATE          115200
@@ -131,14 +133,10 @@ void usb_loop_once() {
 
         if (hid_ready_wait(HID_REPORT_TIMEOUT_US)) {
             uint8_t keys[6] = {kc, 0, 0, 0, 0, 0};
+            puts("DEBUG: sending USB key as follows");
+            print_as_hex(keys, sizeof keys);
+            putchar('\n');
             tud_hid_keyboard_report(0, mod, keys);
-        }
-        else {
-            n_hid_timeouts++;
-        }
-
-        if (hid_ready_wait(HID_REPORT_TIMEOUT_US)) {
-            tud_hid_keyboard_report(0, 0, NULL);
         }
         else {
             n_hid_timeouts++;
@@ -170,6 +168,8 @@ int main(void) {
     // appropriately fire.
     static repeating_timer_t liveness_timer;
     add_repeating_timer_ms(1000, liveness_tick, NULL, &liveness_timer);
+
+    puts("DEBUG: init complete, launching 2 core loops");
 
     multicore_launch_core1(core1_main);
 

@@ -15,6 +15,8 @@
 
 package websocket
 
+import "fmt"
+
 // KeyEventParams is the wire shape for an inbound MsgKeyEvent payload.
 // The Go field names match W3C KeyboardEvent semantics (Type / Code) while
 // JSON tags match what the browser KeyboardEvent fields are named on the
@@ -22,4 +24,9 @@ package websocket
 type KeyEventParams struct {
 	Type string `json:"type"` // W3C KeyboardEvent.type, e.g. "keyup" / "keydown"
 	Code string `json:"code"` // W3C KeyboardEvent.code, e.g. "KeyA" / "Enter"
+}
+
+// String renders the params in a compact form suitable for log lines.
+func (p KeyEventParams) String() string {
+	return fmt.Sprintf("KeyEvent{type=%s code=%s}", p.Type, p.Code)
 }

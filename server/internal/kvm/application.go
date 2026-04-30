@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 )
@@ -50,6 +51,7 @@ var (
 // supported.
 type Application struct {
 	baseCtx context.Context
+	logger  *slog.Logger
 
 	// DefaultChannel is attached to each new Client by AddClient when set.
 	DefaultChannel *Channel
@@ -77,10 +79,14 @@ type channelHandle struct {
 
 // NewApplication returns a fresh, empty Application. Channel goroutines
 // derive their context from baseCtx; cancelling baseCtx tears down every
-// active Channel.
-func NewApplication(baseCtx context.Context) *Application {
+// active Channel. If logger is nil, [slog.Default] is used.
+func NewApplication(baseCtx context.Context, logger *slog.Logger) *Application {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Application{
 		baseCtx:        baseCtx,
+		logger:         logger,
 		channels:       make(map[string]*Channel),
 		clientChan:     make(map[*Client]*Channel),
 		channelClients: make(map[*Channel]map[*Client]struct{}),
@@ -118,16 +124,14 @@ type ChannelInfo struct {
 	Channel *Channel
 }
 
-// Channels returns the registered Channels in stable ID order, omitting the
-// reserved "__default__" channel which is not user-selectable.
+// Channels returns the registered Channels in stable ID order. The reserved
+// [DefaultChannelID] entry is included so it appears in user-facing channel
+// lists as a "park here when nothing is selected" option.
 func (a *Application) Channels() []ChannelInfo {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	ids := make([]string, 0, len(a.channels))
 	for id := range a.channels {
-		if id == defaultChannelID {
-			continue
-		}
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -138,10 +142,10 @@ func (a *Application) Channels() []ChannelInfo {
 	return out
 }
 
-// defaultChannelID is the reserved registry key under which wiring code
+// DefaultChannelID is the reserved registry key under which wiring code
 // stores [Application.DefaultChannel] so it benefits from the standard
 // AddChannel path while remaining hidden from user-facing channel lists.
-const defaultChannelID = "__default__"
+const DefaultChannelID = "__default__"
 
 // RemoveClient detaches c from any Channel and forgets it. If c was the
 // last Client on its Channel, the Channel's goroutine is stopped.
@@ -192,25 +196,42 @@ func (a *Application) SwitchChannel(ctx context.Context, p SwitchChannelParams) 
 	return SwitchChannelResult(p), nil
 }
 
-// RecordKeyEvent forwards ke to the Channel currently attached to the Client
-// in ctx. Send blocks until the Channel's drainer accepts it (or ctx is
-// cancelled); backpressure from a slow sink propagates upstream to the
-// dispatcher's caller.
-func (a *Application) RecordKeyEvent(ctx context.Context, ke KeyEvent) error {
+// RecordKeyEvent enqueues the edge in p onto the Channel currently attached
+// to the Client in ctx. The Channel's drainer applies the edge to KbdState
+// and dispatches a fully-stamped KeyEvent in arrival order. Send blocks until
+// the drainer accepts the edge (or ctx is cancelled); backpressure from a
+// slow sink propagates upstream to the dispatcher's caller.
+func (a *Application) RecordKeyEvent(ctx context.Context, p KeyEventParams) error {
 	c := ClientFromContext(ctx)
 	if c == nil {
+		a.logger.Warn("record key event rejected", "reason", "no client", "code", p.Code, "type", p.Type)
 		return ErrNoClient
 	}
 	a.mu.RLock()
 	ch, known := a.clientChan[c]
+	chID := ""
+	if known && ch != nil {
+		chID = a.channelIDLocked(ch)
+	}
 	a.mu.RUnlock()
 	if !known {
+		a.logger.Warn("record key event rejected", "reason", "unknown client",
+			"client", clientID(c), "code", p.Code, "type", p.Type)
 		return ErrUnknownClient
 	}
 	if ch == nil {
+		a.logger.Warn("record key event rejected", "reason", "no active channel",
+			"client", clientID(c), "code", p.Code, "type", p.Type)
 		return ErrNoActiveChannel
 	}
-	return ch.SendKeyEvent(ctx, ke)
+	if err := ch.SendKeyEdge(ctx, p.Code, p.Type); err != nil {
+		a.logger.Warn("record key event rejected", "reason", "send failed",
+			"channel", chID, "client", clientID(c), "code", p.Code, "type", p.Type, "err", err)
+		return err
+	}
+	a.logger.Debug("record key event",
+		"channel", chID, "client", clientID(c), "code", p.Code, "type", p.Type)
+	return nil
 }
 
 // attachLocked adds c to ch's client set, starting ch's goroutine if c is
@@ -221,12 +242,17 @@ func (a *Application) attachLocked(c *Client, ch *Channel) {
 		set = make(map[*Client]struct{})
 		a.channelClients[ch] = set
 	}
-	if len(set) == 0 {
+	first := len(set) == 0
+	if first {
 		a.startChannelLocked(ch)
 	}
 	set[c] = struct{}{}
 	a.clientChan[c] = ch
 	ch.RegisterClient(c)
+	if first {
+		a.logger.Info("channel attached",
+			"channel", a.channelIDLocked(ch), "client", clientID(c))
+	}
 }
 
 // detachLocked removes c from its current Channel (if any), stopping the
@@ -244,7 +270,24 @@ func (a *Application) detachLocked(c *Client) {
 	if len(set) == 0 {
 		delete(a.channelClients, ch)
 		a.stopChannelLocked(ch)
+		a.logger.Info("channel detached",
+			"channel", a.channelIDLocked(ch), "client", clientID(c))
 	}
+}
+
+// channelIDLocked returns the registered ID for ch, or "" if not registered.
+// Caller must hold a.mu.
+func (a *Application) channelIDLocked(ch *Channel) string {
+	for id, c := range a.channels {
+		if c == ch {
+			return id
+		}
+	}
+	return ""
+}
+
+func clientID(c *Client) string {
+	return fmt.Sprintf("%p", c)
 }
 
 func (a *Application) startChannelLocked(ch *Channel) {

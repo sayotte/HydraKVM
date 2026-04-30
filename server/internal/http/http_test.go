@@ -36,7 +36,7 @@ import (
 
 func newTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
-	app := kvm.NewApplication(t.Context())
+	app := kvm.NewApplication(t.Context(), nil)
 	app.AddChannel("ch1", kvm.NewChannel(nil, nil))
 	router := dispatch.NewRouter()
 	dispatch.Register(router, kvm.MsgSwitchChannel, app.SwitchChannel)
@@ -53,7 +53,7 @@ func TestNewServerStoresWiring(t *testing.T) {
 	cfg := config.HTTPServerConfig{ListenAddr: ":0"}
 	ap := &auth.NullProvider{}
 	dr := dispatch.NewRouter()
-	app := kvm.NewApplication(t.Context())
+	app := kvm.NewApplication(t.Context(), nil)
 	s, err := NewServer(cfg, ap, dr, app, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -73,7 +73,7 @@ func TestNewServerStoresWiring(t *testing.T) {
 }
 
 func TestListenAndServeReturnsServerClosedOnShutdown(t *testing.T) {
-	app := kvm.NewApplication(t.Context())
+	app := kvm.NewApplication(t.Context(), nil)
 	s, err := NewServer(config.HTTPServerConfig{ListenAddr: "127.0.0.1:0"}, &auth.NullProvider{}, dispatch.NewRouter(), app, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

@@ -44,6 +44,51 @@ UX; capture this as a deferred enhancement so an opt-in toggle (e.g. a
 "fullscreen capture" button) can be added without being forced on
 operators.
 
+## README staleness pass
+
+`README.md` build/run sections were refreshed at the end of step 4, but
+several other sections still describe pre-step-4 reality and need a
+sweep before the next external read:
+
+- **Wire protocol section** says "every message ... is exactly 2 bytes"
+  — actually 3 bytes now (`[0xFF SYNC, mod, kc]`, per the firmware
+  resync logic added during Wave 2C).
+- **Pico firmware "How it works"** says "Each command produces a
+  key-press report followed by a key-release report" — no longer true;
+  the auto-release was removed so each command is a state snapshot
+  (USB HID boot-keyboard semantics).
+- **Status / Working** is missing: the web UI, multi-channel switching,
+  the `(none)` parking channel, and end-to-end keyboard dispatch from
+  browser to picolink.
+- **Status / Not yet implemented** still lists "Web UI" and "Arrow keys,
+  F-keys, and other multi-byte escape sequences" — both shipped in
+  steps 3 and 4.
+
+Architecture diagram and modifier-bitmask table are still correct.
+
+## Multi-key rollover and PiKVM-compatible wire protocol
+
+Two related items, deliberately grouped because their order depends on
+what the PiKVM wire protocol turns out to support; not yet investigated.
+
+- **Pressed-usage set in `KbdState`.** Today the Channel drainer tracks
+  only the modifier mask, and the Pico wire protocol carries a single
+  keycode byte per command. So holding A and then pressing B produces
+  successive reports `(0,[A,...])` then `(0,[B,...])`, which the host
+  diffs as "A released, B pressed" — wrong for chord-style usage and for
+  games (WASD, Shift+WASD). To send a correct 8-byte HID report
+  `(mod, [kc1..kc6])` the drainer needs a pressed-usage set so it can
+  rebuild the full snapshot on every edge. The spec
+  (`docs/code-map.md`, `docs/implementation-plan.md`) already calls for
+  this; deferred from Step 4 because nothing exercised it.
+- **PiKVM-compatible serial wire protocol.** The current `[0xFF, mod,
+  kc]` framing (kvm-side `picolink` and Pico firmware) is bespoke. We
+  want to replace it with whatever PiKVM uses end-to-end so HydraKVM
+  hardware can interoperate with PiKVM tooling, and vice versa. This
+  likely also resolves the rollover protocol question (PiKVM presumably
+  carries a full keys array), so the two items may collapse into one
+  change.
+
 ## Channel key-event write path
 
 The per-Channel serialization goroutine calls `KeyEventSink.ReportKeyEvent`

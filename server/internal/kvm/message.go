@@ -49,3 +49,12 @@ type ClientUpdateParams struct {
 	ChannelID string `json:"channel_id,omitempty"`
 	Reason    string `json:"reason,omitempty"`
 }
+
+// KeyEventParams is the post-translation, kvm-side payload for an inbound
+// MsgKeyEvent. Modifier state is owned by Application's per-Channel
+// [KeyboardState] and stamped onto the outbound [KeyEvent], so it is not
+// carried here.
+type KeyEventParams struct {
+	Code KeyCode
+	Type KeyType
+}

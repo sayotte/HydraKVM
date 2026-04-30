@@ -22,9 +22,10 @@ import (
 
 // Channel binds one VideoSource and one KeyEventSink to a per-Channel
 // KeyboardState. Multiple Clients may drive the same Channel concurrently;
-// writes are serialized through an unbuffered chan KeyEvent drained by
-// [Channel.Run]. Backpressure flows upstream to whoever called
-// [Channel.SendKeyEvent] (in production, the WebSocket reader goroutine via
+// edges are serialized through an unbuffered chan drained by [Channel.Run],
+// which applies each edge to KbdState and emits a fully-stamped KeyEvent to
+// KeyOut. Backpressure flows upstream to whoever called
+// [Channel.SendKeyEdge] (in production, the WebSocket reader goroutine via
 // the dispatcher), which is the desired behavior — a wedged USB serial write
 // should slow the offending Client, not silently grow a queue.
 //
@@ -36,10 +37,18 @@ type Channel struct {
 	KeyOut   KeyEventSink
 	KbdState KeyboardState
 
-	keyCh chan KeyEvent
+	edgeCh chan keyEdge
 
 	mu      sync.RWMutex
 	clients map[*Client]struct{}
+}
+
+// keyEdge is the producer-side payload on the Channel's edge queue. Modifier
+// state is resolved on the consumer side (the Run drainer), so the chan order
+// is the sole linearizer for both KbdState mutation and sink delivery.
+type keyEdge struct {
+	Code KeyCode
+	Type KeyType
 }
 
 // NewChannel constructs a Channel. In production, [Application] launches
@@ -49,7 +58,7 @@ func NewChannel(vs VideoSource, ks KeyEventSink) *Channel {
 	return &Channel{
 		VideoIn: vs,
 		KeyOut:  ks,
-		keyCh:   make(chan KeyEvent),
+		edgeCh:  make(chan keyEdge),
 		clients: make(map[*Client]struct{}),
 	}
 }
@@ -69,28 +78,37 @@ func (c *Channel) UnregisterClient(cl *Client) {
 	c.mu.Unlock()
 }
 
-// Run drains the Channel's key-event queue and dispatches each event to the
-// KeyEventSink in arrival order; in parallel it pumps frames from VideoIn to
-// every registered Client. Returns when ctx is cancelled. There is exactly
-// one Run goroutine per Channel; key-event serialization is enforced by the
-// single drainer plus the unbuffered queue on the producer side.
+// Run drains the Channel's edge queue, mutates KbdState in arrival order, and
+// dispatches each fully-stamped KeyEvent to the KeyEventSink; in parallel it
+// pumps frames from VideoIn to every registered Client. Returns when ctx is
+// cancelled. There is exactly one Run goroutine per Channel; the single
+// drainer is the sole writer to KbdState, so no further synchronization is
+// needed.
 func (c *Channel) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	if c.VideoIn != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			c.runVideoPump(ctx)
-		}()
+		wg.Go(func() { c.runVideoPump(ctx) })
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			wg.Wait()
 			return
-		case ke := <-c.keyCh:
+		case e := <-c.edgeCh:
+			if e.Code.IsModifier() {
+				bit := e.Code.ModifierBit()
+				if e.Type == KeyTypeDown {
+					c.KbdState.Modifiers |= bit
+				} else {
+					c.KbdState.Modifiers &^= bit
+				}
+			}
 			if c.KeyOut != nil {
-				c.KeyOut.ReportKeyEvent(ke)
+				c.KeyOut.ReportKeyEvent(KeyEvent{
+					Code:      e.Code,
+					Type:      e.Type,
+					Modifiers: c.KbdState.Modifiers,
+				})
 			}
 		}
 	}
@@ -121,13 +139,15 @@ func (c *Channel) fanout(vf VideoFrame) {
 	c.mu.RUnlock()
 }
 
-// SendKeyEvent enqueues a KeyEvent for serialized delivery to the Channel's
-// KeyEventSink. Blocks until the drainer accepts it or ctx is cancelled.
-func (c *Channel) SendKeyEvent(ctx context.Context, ke KeyEvent) error {
+// SendKeyEdge enqueues a key edge for serialized delivery. The Channel's Run
+// goroutine resolves the post-edge modifier mask and emits the stamped
+// KeyEvent to KeyOut in chan-arrival order. Blocks until the drainer accepts
+// the edge or ctx is cancelled.
+func (c *Channel) SendKeyEdge(ctx context.Context, code KeyCode, typ KeyType) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case c.keyCh <- ke:
+	case c.edgeCh <- keyEdge{Code: code, Type: typ}:
 		return nil
 	}
 }

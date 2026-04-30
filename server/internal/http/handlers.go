@@ -37,7 +37,11 @@ func (s *Server) handleIndex(w nethttp.ResponseWriter, r *nethttp.Request) {
 	chans := s.App.Channels()
 	tmplChans := make([]web.ChannelInfo, len(chans))
 	for i, c := range chans {
-		tmplChans[i] = web.ChannelInfo{ID: c.ID, Name: c.ID}
+		name := c.ID
+		if c.ID == kvm.DefaultChannelID {
+			name = "(none)"
+		}
+		tmplChans[i] = web.ChannelInfo{ID: c.ID, Name: name}
 	}
 	var buf bytes.Buffer
 	if err := s.indexTmpl.Execute(&buf, web.IndexData{Title: "HydraKVM", Channels: tmplChans}); err != nil {
@@ -130,6 +134,16 @@ func (s *Server) runDispatchLoop(ctx context.Context, codec *wsockt.Codec, clien
 		if err := json.Unmarshal(data, &env); err != nil {
 			s.Logger.Warn("ws bad envelope", "err", err)
 			continue
+		}
+		if env.Type == kvm.MsgKeyEvent {
+			var p wsockt.KeyEventParams
+			if err := json.Unmarshal(env.Payload, &p); err == nil {
+				s.Logger.Debug("ws inbound", "envelope", env.Type, "payload", p.String())
+			} else {
+				s.Logger.Debug("ws inbound", "envelope", env.Type, "payload_raw", string(env.Payload))
+			}
+		} else {
+			s.Logger.Debug("ws inbound", "envelope", env.Type)
 		}
 		reply, err := s.Dispatcher.Dispatch(ctx, env)
 		if err != nil {

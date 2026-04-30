@@ -138,32 +138,107 @@ The build produces `hydra-keyboard.uf2` in the `firmware/pico/build/` directory.
 - `PICO_DEFAULT_UART` is set to 1, with TX on GP4 and RX on GP5, to avoid conflict with the UART0 command channel
 - Linked libraries: `pico_stdlib`, `tinyusb_device`, `tinyusb_board`, `pico_multicore`
 
-## HydraKVM server (Go)
+## HydraKVM server (Go) and web client (TypeScript)
 
-A Go program reads terminal input, maps ASCII characters and control codes to HID usage IDs, and writes 2-byte pairs to the serial device connected to the Pico.
+The server is a single Go binary (`hydrakvm`) that hosts the HTTP/WebSocket API, serves the web client, drives the Pico over serial, and (in later steps) reads the HDMI capture device. The web client is a small TypeScript bundle the server embeds at compile time.
 
-### Building
+### Prerequisites
+
+- **Go 1.25** (toolchain pinned in `server/go.mod`)
+- **Podman** (the web client builds inside a container; see `web/Containerfile`)
+- A serial device the operator can read/write (the Pico, or a USB-TTL adapter)
+
+You don't need Node, npm, or any TypeScript toolchain on the host — `web/run.sh` runs everything inside the builder container.
+
+### Build order
+
+The Go binary embeds the web bundle at compile time via `//go:embed`, so the bundle must exist on disk before you `go build`. Always: web first, server second.
+
+```sh
+# 1. Build the web bundle (TypeScript -> server/internal/http/web/dist/)
+web/run.sh npm install      # first time only
+web/run.sh npm run build
+
+# 2. Build the server
+cd server
+go build -o /tmp/hydrakvm ./cmd/hydrakvm
+```
+
+The bundle is emitted directly into `server/internal/http/web/dist/` (the wrapper script bind-mounts that path into the container), so step 2 picks it up without any copy step.
+
+For iterative web work, `web/run.sh npm run watch` rebuilds the bundle on every save; you still need to rebuild and restart the Go binary to embed the new bundle.
+
+### Configuration
+
+The server takes a YAML config file. A starting point lives at `server/cmd/hydrakvm/example-config.yaml`. Minimal fields:
+
+```yaml
+http:
+  listen_addr: ":8080"
+
+auth:
+  provider: "null"          # no real auth yet; placeholder
+  provider_config: null
+
+channels:
+  - name: "synth-1"
+    video:
+      type: "synthetic"     # generated test pattern; v4l comes in step 5
+      device_path: ""
+    keys:
+      type: "picolink"      # or "null" for a no-op sink useful in dev
+      device_path: "/dev/tty.usbmodem01234567891"
+```
+
+`type: "null"` for `keys` lets the server run end-to-end without any serial hardware attached. The full key-event dispatch path still fires; events are logged at debug then discarded.
+
+### Running
+
+```sh
+/tmp/hydrakvm -config /path/to/config.yaml -log-level info
+```
+
+Flags:
+
+- `-config <path>` — path to the YAML config (default `/etc/hydrakvm/config.yaml`).
+- `-log-level <level>` — `debug` | `info` | `warn` | `error` (default `info`). Use `debug` to see WebSocket frames, dispatch decisions, and per-key trace.
+
+Then point a browser at `http://localhost:8080/`. The dropdown defaults to `(none)`, a parking channel that ignores keystrokes; pick a real channel to start driving the target.
+
+### Hardware smoke test
+
+`server/cmd/test/main.go` is a standalone binary that exercises only the picolink driver: it opens the configured serial device and types the alphabet (one letter per second, looping) until interrupted. Useful for validating the firmware/serial/HID-translation chain without bringing up the rest of the server.
 
 ```sh
 cd server
-go mod tidy
-go build
+go build -o /tmp/hydrakvm-test ./cmd/test
+/tmp/hydrakvm-test    # types A-Z forever; Ctrl-C to exit
 ```
 
-### Usage (development)
+The device path is hard-coded; edit the constant at the top of `main.go` if your Pico enumerates somewhere else.
+
+### Tests, vet, lint
+
+From `server/`:
 
 ```sh
-# Interactive keyboard passthrough
-./hydrakvm /dev/ttyUSB0     # Linux
-./hydrakvm /dev/cu.usbserial-XXXXX  # macOS
+go vet ./...
+golangci-lint run
+go test -race ./...
 ```
 
-Type into the terminal; keystrokes are sent to the Pico and appear on the target machine. Ctrl+] to quit.
+The `internal/picolink` package has a hardware-gated test that opens a real serial device; run it explicitly when validating end-to-end:
 
-### Dependencies
+```sh
+HYDRAKVM_PICO_TTY=/dev/tty.usbmodem01234567891 \
+  go test -tags=hardware -run TestHardware ./internal/picolink
+```
 
-- `go.bug.st/serial` — serial port access with baud rate configuration
-- `golang.org/x/term` — raw terminal mode
+Web client:
+
+```sh
+web/run.sh npm run check    # tsc --noEmit && eslint
+```
 
 ## Status
 

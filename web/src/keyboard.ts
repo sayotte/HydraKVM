@@ -29,9 +29,15 @@ export function attachKeyboard(
     if (!(raw instanceof KeyboardEvent)) return;
     raw.preventDefault();
     const code = raw.code;
-    if (code === '') return;
+    if (code === '') {
+      console.debug('[keyboard] ignored event with empty code', raw);
+      return;
+    }
     const type: KeyEventParams['type'] =
       raw.type === 'keydown' ? 'keydown' : 'keyup';
+    console.debug(
+      `[keyboard] capture type=${type} code=${code} repeat=${raw.repeat}`,
+    );
     send({
       type: MSG_KEY_EVENT,
       payload: { type, code },

@@ -15,17 +15,16 @@
 
 package picolink
 
-import (
-	"testing"
+import "golang.org/x/sys/unix"
 
-	"github.com/sayotte/hydrakvm/internal/kvm"
+const (
+	getTermios = unix.TCGETS
+	setTermios = unix.TCSETS
 )
 
-// Compile-time check that *Keyboard implements [kvm.KeyEventSink].
-var _ kvm.KeyEventSink = (*Keyboard)(nil)
-
-func TestNewKeyboardOpenFailureReturnsError(t *testing.T) {
-	if _, err := NewKeyboard("/nonexistent/path/that/should/not/exist", nil); err == nil {
-		t.Fatalf("expected error opening nonexistent device, got nil")
-	}
+func setBaud(t *unix.Termios, baud uint32) {
+	t.Cflag &^= unix.CBAUD
+	t.Cflag |= baud
+	t.Ispeed = baud
+	t.Ospeed = baud
 }

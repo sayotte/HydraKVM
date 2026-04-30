@@ -25,7 +25,7 @@ export function attachChannelSelector(
   selectEl: HTMLSelectElement,
   send: Sender,
 ): () => void {
-  const handler = (): void => {
+  const fireSwitch = (): void => {
     const id = selectEl.value;
     if (id === '') return;
     send({
@@ -33,8 +33,13 @@ export function attachChannelSelector(
       payload: { channel_id: id },
     });
   };
-  selectEl.addEventListener('change', handler);
+  // The browser pre-selects the first option but never fires a 'change' event
+  // for it, so the server would stay on the default channel until the user
+  // manually picks something else. Sync once on attach so the visible
+  // selection matches the server's view of "current channel".
+  fireSwitch();
+  selectEl.addEventListener('change', fireSwitch);
   return () => {
-    selectEl.removeEventListener('change', handler);
+    selectEl.removeEventListener('change', fireSwitch);
   };
 }

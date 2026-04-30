@@ -2,3 +2,4 @@
 build/*
 server/internal/http/web/dist/*
 !server/internal/http/web/dist/.gitkeep
+firmware/pico/build*

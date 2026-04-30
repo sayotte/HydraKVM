@@ -58,7 +58,7 @@ func (s *recordingSink) ReportKeyEvent(ke kvm.KeyEvent) {
 // Envelope with Type=MsgSwitchChannel and a SwitchChannelParams payload
 // reaches Application.SwitchChannel and mutates Application state.
 func TestDispatchInvokesApplicationMethod(t *testing.T) {
-	app := kvm.NewApplication(t.Context())
+	app := kvm.NewApplication(t.Context(), nil)
 	ch := kvm.NewChannel(nil, nil)
 	app.AddChannel("ch1", ch)
 	c := &kvm.Client{}
@@ -111,7 +111,7 @@ func TestTwoClientsConcurrentlyDriveOneChannelSerialized(t *testing.T) {
 	sink := &recordingSink{}
 	ch := kvm.NewChannel(nil, sink)
 
-	app := kvm.NewApplication(t.Context())
+	app := kvm.NewApplication(t.Context(), nil)
 	app.AddChannel("ch1", ch)
 	cA := &kvm.Client{}
 	cB := &kvm.Client{}
@@ -132,7 +132,7 @@ func TestTwoClientsConcurrentlyDriveOneChannelSerialized(t *testing.T) {
 
 	const eventsPerClient = 200
 	send := func(ctx context.Context, code kvm.KeyCode) {
-		payload, err := json.Marshal(kvm.KeyEvent{Code: code, Type: kvm.KeyTypeDown})
+		payload, err := json.Marshal(kvm.KeyEventParams{Code: code, Type: kvm.KeyTypeDown})
 		if err != nil {
 			t.Errorf("marshal: %v", err)
 			return

@@ -66,14 +66,14 @@ func TestChannelRunDeliversInOrder(t *testing.T) {
 		{Code: KeyB, Type: KeyTypeDown},
 	}
 	for _, ke := range want {
-		if err := ch.SendKeyEvent(ctx, ke); err != nil {
-			t.Fatalf("SendKeyEvent: %v", err)
+		if err := ch.SendKeyEdge(ctx, ke.Code, ke.Type); err != nil {
+			t.Fatalf("SendKeyEdge: %v", err)
 		}
 	}
 
 	// Drain: send a sentinel to ensure prior events were processed.
-	if err := ch.SendKeyEvent(ctx, KeyEvent{Code: KeyZ, Type: KeyTypeDown}); err != nil {
-		t.Fatalf("sentinel SendKeyEvent: %v", err)
+	if err := ch.SendKeyEdge(ctx, KeyZ, KeyTypeDown); err != nil {
+		t.Fatalf("sentinel SendKeyEdge: %v", err)
 	}
 	// After SendKeyEvent for the sentinel returns, the drainer has read it
 	// from the unbuffered channel; the previous event has already entered
@@ -230,14 +230,14 @@ func TestChannelDropsFramesForSaturatedSink(t *testing.T) {
 	}
 }
 
-func TestChannelSendKeyEventRespectsContextCancel(t *testing.T) {
+func TestChannelSendKeyEdgeRespectsContextCancel(t *testing.T) {
 	ch := NewChannel(nil, &recordingSink{})
 	// No Run goroutine — every send will block.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := ch.SendKeyEvent(ctx, KeyEvent{Code: KeyA, Type: KeyTypeDown})
+	err := ch.SendKeyEdge(ctx, KeyA, KeyTypeDown)
 	if err == nil {
 		t.Fatal("expected error when context is cancelled before send")
 	}

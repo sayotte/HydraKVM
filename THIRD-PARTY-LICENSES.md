@@ -89,6 +89,22 @@ License text: see [ISC](#isc-license-text) below.
 
 ---
 
+## golang.org/x/sys
+
+- **Project:** Go `x/sys` repository
+- **URL:** https://pkg.go.dev/golang.org/x/sys
+- **License:** BSD-3-Clause
+- **Used in:** Go server — `internal/picolink` uses `golang.org/x/sys/unix`
+  to configure the Pico serial port (raw mode, 115200 8N1) via termios.
+
+Copyright notice (reproduced from upstream `LICENSE`):
+
+> Copyright (c) 2009 The Go Authors. All rights reserved.
+
+License text: see [BSD-3-Clause](#bsd-3-clause-license-text) below.
+
+---
+
 ## BSD-3-Clause license text
 
 Redistribution and use in source and binary forms, with or without

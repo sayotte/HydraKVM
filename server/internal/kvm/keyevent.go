@@ -15,18 +15,34 @@
 
 package kvm
 
+// ModifierMask is the USB HID boot-keyboard modifier byte: a bitmap of the
+// eight modifier keys held at a given instant.
+type ModifierMask uint8
+
+const (
+	ModLeftCtrl   ModifierMask = 1 << 0
+	ModLeftShift  ModifierMask = 1 << 1
+	ModLeftAlt    ModifierMask = 1 << 2
+	ModLeftMeta   ModifierMask = 1 << 3
+	ModRightCtrl  ModifierMask = 1 << 4
+	ModRightShift ModifierMask = 1 << 5
+	ModRightAlt   ModifierMask = 1 << 6
+	ModRightMeta  ModifierMask = 1 << 7
+)
+
 // KeyEvent is a single edge transition decided by the Application and handed
 // to a KeyEventSink. It carries the canonical kvm-side enums; wire-side
 // string parsing happens upstream via a [KeyEventTranslator].
 type KeyEvent struct {
 	Code KeyCode
 	Type KeyType
+	// Modifiers is the post-edge snapshot of held modifiers, including this
+	// edge if Code is itself a modifier key.
+	Modifiers ModifierMask
 }
 
-// KeyboardState tracks the per-Channel keyboard view: held modifiers, the set
-// of currently-pressed usages, and any policy flags that influence how the
-// Application drives the Channel's KeyEventSink. Mutated by Application; the
-// sink is stateless with respect to this data.
+// KeyboardState tracks the per-Channel keyboard view. Mutated by Application;
+// the sink is stateless with respect to this data.
 type KeyboardState struct {
-	// Concrete fields are added in Step 4, when keyevent decoding lands.
+	Modifiers ModifierMask
 }

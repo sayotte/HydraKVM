@@ -225,3 +225,34 @@ type KeyEventTranslator interface {
 	ParseKeyCode(s string) (KeyCode, bool)
 	ParseKeyType(s string) (KeyType, bool)
 }
+
+func (c KeyCode) IsModifier() bool {
+	switch c {
+	case ControlLeft, ShiftLeft, AltLeft, MetaLeft,
+		ControlRight, ShiftRight, AltRight, MetaRight:
+		return true
+	}
+	return false
+}
+
+func (c KeyCode) ModifierBit() ModifierMask {
+	switch c {
+	case ControlLeft:
+		return ModLeftCtrl
+	case ShiftLeft:
+		return ModLeftShift
+	case AltLeft:
+		return ModLeftAlt
+	case MetaLeft:
+		return ModLeftMeta
+	case ControlRight:
+		return ModRightCtrl
+	case ShiftRight:
+		return ModRightShift
+	case AltRight:
+		return ModRightAlt
+	case MetaRight:
+		return ModRightMeta
+	}
+	return 0
+}

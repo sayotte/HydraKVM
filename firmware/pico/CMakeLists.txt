@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(hydra-keyboard hydra-keyboard.c usb_descriptors.c helper.c)
+add_executable(hydra-keyboard hydra-keyboard.c usb_descriptors.c)
 
 pico_set_program_name(hydra-keyboard "hydra-keyboard")
 pico_set_program_version(hydra-keyboard "0.1")

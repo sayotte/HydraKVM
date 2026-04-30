@@ -52,6 +52,7 @@ const (
 
 func main() {
 	cfgPath := flag.String("config", defaultConfigPath, "path to the HydraKVM YAML configuration file")
+	logLevel := flag.String("log-level", "info", "log verbosity: debug | info | warn | error")
 	flag.Usage = func() {
 		out := flag.CommandLine.Output()
 		_, _ = io.WriteString(out, "hydrakvm — HydraKVM server\n\nUsage: ")
@@ -61,13 +62,33 @@ func main() {
 	}
 	flag.Parse()
 
-	if err := run(*cfgPath); err != nil {
+	if err := run(*cfgPath, *logLevel); err != nil {
 		fmt.Fprintln(os.Stderr, "hydrakvm:", err)
 		os.Exit(1)
 	}
 }
 
-func run(cfgPath string) error {
+func parseLogLevel(s string) (slog.Level, error) {
+	switch s {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return 0, fmt.Errorf("invalid log level %q (want debug|info|warn|error)", s)
+	}
+}
+
+func run(cfgPath, logLevel string) error {
+	level, err := parseLogLevel(logLevel)
+	if err != nil {
+		return err
+	}
+
 	var cfg config.Config
 	if err := cfg.FromYAML(cfgPath); err != nil {
 		return err
@@ -76,23 +97,23 @@ func run(cfgPath string) error {
 		return fmt.Errorf("config invalid: %w", errors.Join(errs...))
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
 	authProvider, err := newAuthProvider(cfg.Auth)
 	if err != nil {
 		return err
 	}
 
-	app := kvm.NewApplication(context.Background())
+	app := kvm.NewApplication(context.Background(), logger)
 	for _, chCfg := range cfg.Channels {
-		ch, err := newChannel(chCfg)
+		ch, err := newChannel(chCfg, logger)
 		if err != nil {
 			return fmt.Errorf("channel %q: %w", chCfg.Name, err)
 		}
 		app.AddChannel(chCfg.Name, ch)
 	}
 
-	defaultCh := kvm.NewChannel(synthetic.NewVideoSource("No Channel Selected"), picolink.NewKeyboard(""))
+	defaultCh := kvm.NewChannel(synthetic.NewVideoSource("No Channel Selected"), discardKeyboard{})
 	app.AddChannel("__default__", defaultCh)
 	app.DefaultChannel = defaultCh
 
@@ -112,7 +133,7 @@ func run(cfgPath string) error {
 		if !ok {
 			return nil, fmt.Errorf("unknown key type %q", p.Type)
 		}
-		return nil, app.RecordKeyEvent(ctx, kvm.KeyEvent{Code: code, Type: typ})
+		return nil, app.RecordKeyEvent(ctx, kvm.KeyEventParams{Code: code, Type: typ})
 	})
 
 	server, err := hkhttp.NewServer(cfg.HTTP, authProvider, router, app, logger)
@@ -144,7 +165,7 @@ func newAuthProvider(cfg config.AuthConfig) (auth.Provider, error) {
 	}
 }
 
-func newChannel(cfg config.ChannelConfig) (*kvm.Channel, error) {
+func newChannel(cfg config.ChannelConfig, logger *slog.Logger) (*kvm.Channel, error) {
 	var vs kvm.VideoSource
 	switch cfg.Video.Type {
 	case "synthetic":
@@ -156,10 +177,38 @@ func newChannel(cfg config.ChannelConfig) (*kvm.Channel, error) {
 	var ks kvm.KeyEventSink
 	switch cfg.Keys.Type {
 	case "picolink":
-		ks = picolink.NewKeyboard(cfg.Keys.DevicePath)
+		kb, err := picolink.NewKeyboard(cfg.Keys.DevicePath, logger)
+		if err != nil {
+			return nil, err
+		}
+		ks = kb
+	case "null":
+		ks = loggingDiscardKeyboard{name: cfg.Name, logger: logger}
 	default:
 		return nil, fmt.Errorf("unknown key sink type %q", cfg.Keys.Type)
 	}
 
 	return kvm.NewChannel(vs, ks), nil
+}
+
+// discardKeyboard is the no-op [kvm.KeyEventSink] attached to the default
+// "no channel selected" channel, where there is no real target to drive.
+type discardKeyboard struct{}
+
+func (discardKeyboard) ReportKeyEvent(kvm.KeyEvent) {}
+
+// loggingDiscardKeyboard is the "null" key-sink driver: it discards events
+// like discardKeyboard but logs each one at debug, useful for end-to-end
+// dispatch troubleshooting without real serial hardware.
+type loggingDiscardKeyboard struct {
+	name   string
+	logger *slog.Logger
+}
+
+func (k loggingDiscardKeyboard) ReportKeyEvent(ke kvm.KeyEvent) {
+	k.logger.Debug("null key sink",
+		"channel", k.name,
+		"code", ke.Code,
+		"type", ke.Type,
+		"modifiers", fmt.Sprintf("%#x", ke.Modifiers))
 }
