@@ -194,13 +194,21 @@ func TestWSRoundTripSwitchChannel(t *testing.T) {
 	if err := conn.Write(ctx, websocket.MessageText, b); err != nil {
 		t.Fatalf("ws write: %v", err)
 	}
-	_, data, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("ws read: %v", err)
-	}
+	// SwitchChannel re-emits MsgMJPEGURL as a hint before the dispatch
+	// reply is written; skip past it.
 	var reply dispatch.Envelope
-	if err := json.Unmarshal(data, &reply); err != nil {
-		t.Fatalf("unmarshal reply: %v", err)
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("ws read: %v", err)
+		}
+		if err := json.Unmarshal(data, &reply); err != nil {
+			t.Fatalf("unmarshal reply: %v", err)
+		}
+		if reply.Type == kvm.MsgMJPEGURL {
+			continue
+		}
+		break
 	}
 	if reply.Type != kvm.MsgSwitchChannel || reply.ID != "test-1" {
 		t.Errorf("reply envelope = %+v", reply)

@@ -53,10 +53,15 @@ type ChannelConfig struct {
 }
 
 // VideoSourceConfig selects a [kvm.VideoSource] driver by Type. DevicePath is
-// driver-interpreted (e.g. /dev/video5 for v4l).
+// driver-interpreted (e.g. /dev/video5 for v4l). Width/Height/Framerate are
+// optional capture-side hints; zero means "let the driver pick the device
+// default". Width and Height must be specified together.
 type VideoSourceConfig struct {
 	Type       string `yaml:"type"`
 	DevicePath string `yaml:"device_path"`
+	Width      int    `yaml:"width"`
+	Height     int    `yaml:"height"`
+	Framerate  int    `yaml:"framerate"`
 }
 
 // KeyEventSinkConfig selects a [kvm.KeyEventSink] driver by Type. DevicePath
@@ -115,6 +120,18 @@ func (c *Config) Validate() []error {
 		}
 		if ch.Video.Type == "" {
 			errs = append(errs, fmt.Errorf("channels[%d].video.type must be set", i))
+		}
+		if ch.Video.Width < 0 {
+			errs = append(errs, fmt.Errorf("channels[%d].video.width must be >= 0", i))
+		}
+		if ch.Video.Height < 0 {
+			errs = append(errs, fmt.Errorf("channels[%d].video.height must be >= 0", i))
+		}
+		if ch.Video.Framerate < 0 {
+			errs = append(errs, fmt.Errorf("channels[%d].video.framerate must be >= 0", i))
+		}
+		if (ch.Video.Width == 0) != (ch.Video.Height == 0) {
+			errs = append(errs, fmt.Errorf("channels[%d].video: width and height must be specified together", i))
 		}
 		if ch.Keys.Type == "" {
 			errs = append(errs, fmt.Errorf("channels[%d].keys.type must be set", i))

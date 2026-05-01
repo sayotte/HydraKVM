@@ -81,8 +81,10 @@ func (r *tokenRegistry) sweepLocked() {
 // streamRegistry holds a token -> *kvm.Client mapping for the /stream/{token}
 // endpoint. Tokens are minted by the WebSocket handler after a Client is
 // registered with the Application; the stream handler looks the Client up to
-// install its mjpegSink as VideoOut. Single-use, no TTL: the token is alive
-// for the lifetime of the WS connection.
+// install its mjpegSink as VideoOut. The token is valid for the lifetime of
+// the WS connection and may be resolved repeatedly (browsers re-fetch the
+// MJPEG stream when video.src is reassigned across channel switches /
+// failover); release sweeps it on Client removal.
 type streamRegistry struct {
 	mu     sync.Mutex
 	tokens map[string]*kvm.Client
@@ -108,11 +110,7 @@ func (r *streamRegistry) consume(token string) (*kvm.Client, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c, ok := r.tokens[token]
-	if !ok {
-		return nil, false
-	}
-	delete(r.tokens, token)
-	return c, true
+	return c, ok
 }
 
 // release removes any pending token for c without consuming it (e.g. on WS

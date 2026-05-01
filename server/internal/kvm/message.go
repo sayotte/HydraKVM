@@ -43,11 +43,23 @@ type SwitchChannelResult struct {
 	ChannelID string `json:"channel_id"`
 }
 
+// ClientUpdateStatus is the discriminator for [MsgClientUpdate] notifications.
+// Each value names a specific transition the Application has decided to push
+// to the Client; new values are added as new transitions become observable.
+type ClientUpdateStatus string
+
+// ClientUpdateStatus values for [MsgClientUpdate] payloads.
+const (
+	ClientUpdateVideoDown      ClientUpdateStatus = "video_down"
+	ClientUpdateVideoRecovered ClientUpdateStatus = "video_recovered"
+)
+
 // ClientUpdateParams is the outbound payload for [MsgClientUpdate]
 // notifications pushed from Application to a Client.
 type ClientUpdateParams struct {
-	ChannelID string `json:"channel_id,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	ChannelID string             `json:"channel_id,omitempty"`
+	Status    ClientUpdateStatus `json:"status,omitempty"`
+	Reason    string             `json:"reason,omitempty"`
 }
 
 // KeyEventParams is the post-translation, kvm-side payload for an inbound

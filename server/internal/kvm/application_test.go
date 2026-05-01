@@ -16,6 +16,7 @@
 package kvm
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -173,44 +174,169 @@ func TestRecordKeyEventUnknownClient(t *testing.T) {
 	}
 }
 
-func TestAddClientAutoAttachesToDefaultChannel(t *testing.T) {
+func TestAddClientDoesNotAutoAttach(t *testing.T) {
 	app := NewApplication(t.Context(), nil)
 	ch := NewChannel(nil, nil)
-	app.AddChannel("__default__", ch)
-	app.DefaultChannel = ch
+	app.AddChannel("ch1", ch)
 
 	c := &Client{}
 	app.AddClient(c)
 
-	if got := app.ChannelOf(c); got != ch {
-		t.Errorf("ChannelOf: got %p want %p", got, ch)
+	if got := app.ChannelOf(c); got != nil {
+		t.Errorf("ChannelOf: got %p want nil", got)
 	}
-	if !app.IsChannelRunning(ch) {
-		t.Error("expected default channel to be running after AddClient")
+	if app.IsChannelRunning(ch) {
+		t.Error("registered channel should not be running before any client attaches")
 	}
 }
 
-func TestApplicationChannelsListsRegisteredIncludingDefault(t *testing.T) {
+func TestAddClientPumpsNoChannelVideoIntoSink(t *testing.T) {
+	src := &fakeVideoSource{interval: 5 * time.Millisecond}
 	app := NewApplication(t.Context(), nil)
-	chDef := NewChannel(nil, nil)
+	app.NoChannelVideo = src
+
+	sink := &countingSink{}
+	c := &Client{}
+	c.SetVideoOut(sink)
+	app.AddClient(c)
+	defer app.RemoveClient(c)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if sink.n.Load() > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("no-channel pump delivered no frames (got %d)", sink.n.Load())
+}
+
+func TestAddClientEmitsNoFailureNotifications(t *testing.T) {
+	app := NewApplication(t.Context(), nil)
+	app.NoChannelVideo = &fakeVideoSource{interval: 5 * time.Millisecond}
+
+	writer := &recordingMessageWriter{}
+	c := &Client{Outbound: writer}
+	app.AddClient(c)
+	defer app.RemoveClient(c)
+
+	time.Sleep(50 * time.Millisecond)
+	for _, m := range writer.snapshot() {
+		if m.Type == MsgClientUpdate {
+			cp, ok := m.Payload.(ClientUpdateParams)
+			if ok && (cp.Status == ClientUpdateVideoDown || cp.Status == ClientUpdateVideoRecovered) {
+				t.Errorf("unexpected %q on connect", cp.Status)
+			}
+		}
+	}
+}
+
+func TestApplicationChannelsListsRegistered(t *testing.T) {
+	app := NewApplication(t.Context(), nil)
 	chA := NewChannel(nil, nil)
 	chB := NewChannel(nil, nil)
-	app.AddChannel(DefaultChannelID, chDef)
 	app.AddChannel("b", chB)
 	app.AddChannel("a", chA)
 
 	got := app.Channels()
-	if len(got) != 3 {
-		t.Fatalf("Channels len: got %d want 3", len(got))
+	if len(got) != 2 {
+		t.Fatalf("Channels len: got %d want 2", len(got))
 	}
-	// Underscore (0x5F) sorts before lowercase letters, so the default
-	// lands at index 0.
-	if got[0].ID != DefaultChannelID || got[1].ID != "a" || got[2].ID != "b" {
-		t.Errorf("Channels order: got %q,%q,%q want %q,a,b",
-			got[0].ID, got[1].ID, got[2].ID, DefaultChannelID)
+	if got[0].ID != "a" || got[1].ID != "b" {
+		t.Errorf("Channels order: got %q,%q want a,b", got[0].ID, got[1].ID)
 	}
-	if got[0].Channel != chDef || got[1].Channel != chA || got[2].Channel != chB {
+	if got[0].Channel != chA || got[1].Channel != chB {
 		t.Error("Channels did not return matching *Channel pointers")
+	}
+}
+
+// TestSwitchChannelToNoneDetaches: an attached Client switching to the empty
+// id detaches from the Channel; subsequent frames come from NoChannelVideo,
+// not the original Channel; KbdState on the original Channel is untouched.
+func TestSwitchChannelToNoneDetaches(t *testing.T) {
+	primary := &fakeVideoSource{interval: 5 * time.Millisecond}
+	noChan := &fakeVideoSource{interval: 5 * time.Millisecond}
+	ch := NewChannel(primary, nil)
+	ch.KbdState.Modifiers = ModLeftShift // canary
+
+	app := NewApplication(t.Context(), nil)
+	app.NoChannelVideo = noChan
+	app.AddChannel("ch1", ch)
+
+	writer := &recordingMessageWriter{}
+	const streamURL = "/stream/tok"
+	c := &Client{Outbound: writer, MJPEGStreamURL: streamURL}
+	c.SetVideoOut(&countingSink{})
+	app.AddClient(c)
+	defer app.RemoveClient(c)
+	ctx := WithClient(t.Context(), c)
+
+	if _, err := app.SwitchChannel(ctx, SwitchChannelParams{ChannelID: "ch1"}); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if !app.IsChannelRunning(ch) {
+		t.Fatal("channel should be running after attach")
+	}
+
+	if _, err := app.SwitchChannel(ctx, SwitchChannelParams{ChannelID: NoChannelID}); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	if got := app.ChannelOf(c); got != nil {
+		t.Errorf("ChannelOf after detach: got %p want nil", got)
+	}
+	if app.IsChannelRunning(ch) {
+		t.Error("channel should not be running after last client detached via NoChannelID")
+	}
+	if ch.KbdState.Modifiers != ModLeftShift {
+		t.Errorf("KbdState mutated by detach: got %#x want %#x",
+			ch.KbdState.Modifiers, ModLeftShift)
+	}
+
+	// Re-aim the sink at a fresh counter so we can prove subsequent frames
+	// are arriving from NoChannelVideo (the only live source feeding this
+	// Client now).
+	postSink := &countingSink{}
+	c.SetVideoOut(postSink)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if postSink.n.Load() > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if postSink.n.Load() == 0 {
+		t.Error("no NoChannelVideo frames after detach")
+	}
+
+	// MsgMJPEGURL re-emit on detach.
+	saw := false
+	for _, m := range writer.snapshot() {
+		if m.Type != MsgMJPEGURL {
+			continue
+		}
+		up, ok := m.Payload.(MJPEGURLParams)
+		if ok && up.URL == streamURL {
+			saw = true
+			break
+		}
+	}
+	if !saw {
+		t.Error("expected MsgMJPEGURL re-emit after detach")
+	}
+}
+
+func TestSwitchChannelNoneToNoneNoOp(t *testing.T) {
+	app := NewApplication(t.Context(), nil)
+	app.NoChannelVideo = &fakeVideoSource{interval: 5 * time.Millisecond}
+	c := &Client{}
+	app.AddClient(c)
+	defer app.RemoveClient(c)
+	ctx := WithClient(t.Context(), c)
+
+	for range 3 {
+		if _, err := app.SwitchChannel(ctx, SwitchChannelParams{ChannelID: NoChannelID}); err != nil {
+			t.Fatalf("none->none: %v", err)
+		}
 	}
 }
 
@@ -412,6 +538,187 @@ func TestRecordKeyEventConcurrentClientsModifierConsistency(t *testing.T) {
 	if ch.KbdState.Modifiers != 0 {
 		t.Errorf("final KbdState.Modifiers = %#x, want 0", ch.KbdState.Modifiers)
 	}
+}
+
+// failingVideoSource emits one frame, then closes its channel immediately,
+// signalling source failure. Subsequent Subscribe calls behave the same way
+// until Healthy is true, at which point a long-lived stream resumes.
+type failingVideoSource struct {
+	mu      sync.Mutex
+	healthy bool
+}
+
+func (f *failingVideoSource) Shape() StreamShape     { return StreamShape{Codec: "mjpeg"} }
+func (f *failingVideoSource) InitData() []byte       { return nil }
+func (f *failingVideoSource) RequestKeyframe() error { return nil }
+func (f *failingVideoSource) setHealthy(b bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.healthy = b
+}
+func (f *failingVideoSource) isHealthy() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.healthy
+}
+func (f *failingVideoSource) Subscribe(ctx context.Context) <-chan VideoFrame {
+	ch := make(chan VideoFrame, 1)
+	healthy := f.isHealthy()
+	go func() {
+		defer close(ch)
+		if !healthy {
+			return
+		}
+		t := time.NewTicker(5 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				select {
+				case ch <- VideoFrame{Data: []byte{0xCC}, IsKey: true}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return ch
+}
+
+// recordingMessageWriter captures outbound messages from Application.
+type recordingMessageWriter struct {
+	mu       sync.Mutex
+	messages []recordedMessage
+}
+
+type recordedMessage struct {
+	Type    string
+	Payload any
+}
+
+func (r *recordingMessageWriter) WriteMessage(msgType string, payload any) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.messages = append(r.messages, recordedMessage{Type: msgType, Payload: payload})
+	return nil
+}
+
+func (r *recordingMessageWriter) snapshot() []recordedMessage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]recordedMessage, len(r.messages))
+	copy(out, r.messages)
+	return out
+}
+
+// findFailoverPair returns the index of the MsgMJPEGURL message immediately
+// followed by a ClientUpdateVideoDown notification, or -1 if not present.
+func findFailoverPair(msgs []recordedMessage) int {
+	for i := 0; i+1 < len(msgs); i++ {
+		if msgs[i].Type != MsgMJPEGURL {
+			continue
+		}
+		if msgs[i+1].Type != MsgClientUpdate {
+			continue
+		}
+		cp, ok := msgs[i+1].Payload.(ClientUpdateParams)
+		if ok && cp.Status == ClientUpdateVideoDown {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestApplicationVideoFallbackAndRecovery(t *testing.T) {
+	primary := &failingVideoSource{}
+	fallback := &fakeVideoSource{interval: 5 * time.Millisecond}
+	ch := NewChannel(primary, nil)
+
+	app := NewApplication(t.Context(), nil)
+	app.FallbackVideo = fallback
+	app.VideoRecoveryProbeInterval = 30 * time.Millisecond
+	app.AddChannel("ch1", ch)
+
+	sink := &countingSink{}
+	writer := &recordingMessageWriter{}
+	const streamURL = "/stream/test-token"
+	c := &Client{Outbound: writer, MJPEGStreamURL: streamURL}
+	c.SetVideoOut(sink)
+	app.AddClient(c)
+	if _, err := app.SwitchChannel(WithClient(t.Context(), c), SwitchChannelParams{ChannelID: "ch1"}); err != nil {
+		t.Fatalf("SwitchChannel: %v", err)
+	}
+	defer app.RemoveClient(c)
+
+	// SwitchChannel emits an MJPEGURL hint synchronously; skip past any
+	// such pre-failover messages and locate the failover pair
+	// (MsgMJPEGURL, MsgClientUpdate{video_down}) and at least one
+	// fallback frame.
+	failoverIdx := -1
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		msgs := writer.snapshot()
+		failoverIdx = findFailoverPair(msgs)
+		if failoverIdx >= 0 && sink.n.Load() > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	msgs := writer.snapshot()
+	if failoverIdx < 0 {
+		t.Fatalf("did not see failover (MsgMJPEGURL, video_down) pair; messages = %+v", msgs)
+	}
+	if up, ok := msgs[failoverIdx].Payload.(MJPEGURLParams); !ok {
+		t.Fatalf("failover msg payload type: got %T want MJPEGURLParams", msgs[failoverIdx].Payload)
+	} else if up.URL != streamURL {
+		t.Errorf("failover msg URL: got %q want %q", up.URL, streamURL)
+	}
+	p, ok := msgs[failoverIdx+1].Payload.(ClientUpdateParams)
+	if !ok {
+		t.Fatalf("failover msg[+1] payload type: got %T want ClientUpdateParams", msgs[failoverIdx+1].Payload)
+	}
+	if p.Status != ClientUpdateVideoDown {
+		t.Errorf("failover status: got %q want %q", p.Status, ClientUpdateVideoDown)
+	}
+	if p.ChannelID != "ch1" {
+		t.Errorf("failover channel id: got %q want %q", p.ChannelID, "ch1")
+	}
+	if sink.n.Load() == 0 {
+		t.Error("expected fallback frames to reach sink")
+	}
+
+	// Recover: mark primary healthy. Application should detect on next probe
+	// and emit (MsgMJPEGURL, MsgClientUpdate{video_recovered}) in that order.
+	primary.setHealthy(true)
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		msgs = writer.snapshot()
+		for i, m := range msgs {
+			cp, ok := m.Payload.(ClientUpdateParams)
+			if !ok || cp.Status != ClientUpdateVideoRecovered {
+				continue
+			}
+			if i == 0 {
+				t.Fatalf("video_recovered not preceded by any prior message")
+			}
+			prev := msgs[i-1]
+			if prev.Type != MsgMJPEGURL {
+				t.Fatalf("recovery msg[i-1] type: got %q want %q", prev.Type, MsgMJPEGURL)
+			}
+			up, ok := prev.Payload.(MJPEGURLParams)
+			if !ok {
+				t.Fatalf("recovery msg[i-1] payload type: got %T want MJPEGURLParams", prev.Payload)
+			}
+			if up.URL != streamURL {
+				t.Errorf("recovery msg[i-1] URL: got %q want %q", up.URL, streamURL)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("did not see video_recovered notification; messages = %+v", writer.snapshot())
 }
 
 func TestRemoveClient(t *testing.T) {

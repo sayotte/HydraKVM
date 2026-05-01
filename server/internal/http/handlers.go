@@ -35,13 +35,10 @@ func (s *Server) handleIndex(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	chans := s.App.Channels()
-	tmplChans := make([]web.ChannelInfo, len(chans))
-	for i, c := range chans {
-		name := c.ID
-		if c.ID == kvm.DefaultChannelID {
-			name = "(none)"
-		}
-		tmplChans[i] = web.ChannelInfo{ID: c.ID, Name: name}
+	tmplChans := make([]web.ChannelInfo, 0, len(chans)+1)
+	tmplChans = append(tmplChans, web.ChannelInfo{ID: kvm.NoChannelID, Name: "(none)"})
+	for _, c := range chans {
+		tmplChans = append(tmplChans, web.ChannelInfo{ID: c.ID, Name: c.ID})
 	}
 	var buf bytes.Buffer
 	if err := s.indexTmpl.Execute(&buf, web.IndexData{Title: "HydraKVM", Channels: tmplChans}); err != nil {
@@ -92,15 +89,15 @@ func (s *Server) handleWS(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 	codec := wsockt.NewCodec(conn)
 	client := &kvm.Client{Outbound: codec}
-	s.App.AddClient(client)
 
 	streamTok, err := s.streams.mint(client)
 	if err != nil {
 		s.Logger.Error("stream token mint", "err", err)
-		s.App.RemoveClient(client)
 		_ = codec.Close("server done")
 		return
 	}
+	client.MJPEGStreamURL = streamPathPrefix + streamTok
+	s.App.AddClient(client)
 
 	defer func() {
 		s.streams.release(client)
@@ -109,7 +106,7 @@ func (s *Server) handleWS(w nethttp.ResponseWriter, r *nethttp.Request) {
 		s.Logger.Info("ws disconnected", "remote_addr", r.RemoteAddr)
 	}()
 
-	if err := codec.WriteMessage(kvm.MsgMJPEGURL, kvm.MJPEGURLParams{URL: streamPathPrefix + streamTok}); err != nil {
+	if err := codec.WriteMessage(kvm.MsgMJPEGURL, kvm.MJPEGURLParams{URL: client.MJPEGStreamURL}); err != nil {
 		s.Logger.Warn("ws push mjpeg url", "err", err)
 		return
 	}

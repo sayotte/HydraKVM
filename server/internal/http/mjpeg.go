@@ -95,7 +95,7 @@ func (s *Server) handleStream(w nethttp.ResponseWriter, r *nethttp.Request) {
 	s.Logger.Info("stream connected", "remote_addr", r.RemoteAddr)
 
 	defer func() {
-		client.SetVideoOut(nil)
+		client.ClearVideoOutIf(sink)
 		sink.Close()
 		s.Logger.Info("stream disconnected", "remote_addr", r.RemoteAddr)
 	}()

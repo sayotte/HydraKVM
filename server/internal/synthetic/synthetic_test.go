@@ -42,8 +42,7 @@ func TestShapeAdvertisesMJPEG(t *testing.T) {
 
 func TestSubscribeReceivesFrames(t *testing.T) {
 	src := NewVideoSource("test")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	ch := src.Subscribe(ctx)
 	got := 0

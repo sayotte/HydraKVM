@@ -135,6 +135,99 @@ func TestValidateRejectsDuplicateChannelNames(t *testing.T) {
 	}
 }
 
+func TestValidateVideoSizeAndFramerate(t *testing.T) {
+	base := func() Config {
+		return Config{
+			HTTP: HTTPServerConfig{ListenAddr: ":1"},
+			Auth: AuthConfig{AuthProvider: "null"},
+			Channels: []ChannelConfig{
+				{Name: "ok", Video: VideoSourceConfig{Type: "v4l"}, Keys: KeyEventSinkConfig{Type: "picolink"}},
+			},
+		}
+	}
+
+	t.Run("zeros accepted", func(t *testing.T) {
+		c := base()
+		if errs := c.Validate(); len(errs) != 0 {
+			t.Errorf("unexpected errors: %v", errs)
+		}
+	})
+
+	t.Run("positives accepted", func(t *testing.T) {
+		c := base()
+		c.Channels[0].Video.Width = 1920
+		c.Channels[0].Video.Height = 1080
+		c.Channels[0].Video.Framerate = 30
+		if errs := c.Validate(); len(errs) != 0 {
+			t.Errorf("unexpected errors: %v", errs)
+		}
+	})
+
+	t.Run("framerate alone accepted", func(t *testing.T) {
+		c := base()
+		c.Channels[0].Video.Framerate = 60
+		if errs := c.Validate(); len(errs) != 0 {
+			t.Errorf("unexpected errors: %v", errs)
+		}
+	})
+
+	t.Run("negative width rejected", func(t *testing.T) {
+		c := base()
+		c.Channels[0].Video.Width = -1
+		c.Channels[0].Video.Height = 1080
+		errs := c.Validate()
+		if !anyContains(errs, "width must be >= 0") {
+			t.Errorf("expected width >=0 error, got: %v", errs)
+		}
+	})
+
+	t.Run("negative height rejected", func(t *testing.T) {
+		c := base()
+		c.Channels[0].Video.Width = 1920
+		c.Channels[0].Video.Height = -1
+		errs := c.Validate()
+		if !anyContains(errs, "height must be >= 0") {
+			t.Errorf("expected height >=0 error, got: %v", errs)
+		}
+	})
+
+	t.Run("negative framerate rejected", func(t *testing.T) {
+		c := base()
+		c.Channels[0].Video.Framerate = -1
+		errs := c.Validate()
+		if !anyContains(errs, "framerate must be >= 0") {
+			t.Errorf("expected framerate >=0 error, got: %v", errs)
+		}
+	})
+
+	t.Run("width without height rejected", func(t *testing.T) {
+		c := base()
+		c.Channels[0].Video.Width = 1920
+		errs := c.Validate()
+		if !anyContains(errs, "width and height must be specified together") {
+			t.Errorf("expected paired error, got: %v", errs)
+		}
+	})
+
+	t.Run("height without width rejected", func(t *testing.T) {
+		c := base()
+		c.Channels[0].Video.Height = 1080
+		errs := c.Validate()
+		if !anyContains(errs, "width and height must be specified together") {
+			t.Errorf("expected paired error, got: %v", errs)
+		}
+	})
+}
+
+func anyContains(errs []error, sub string) bool {
+	for _, e := range errs {
+		if strings.Contains(e.Error(), sub) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateAcceptsMinimalConfig(t *testing.T) {
 	c := Config{
 		HTTP: HTTPServerConfig{ListenAddr: ":1"},

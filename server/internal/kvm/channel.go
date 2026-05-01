@@ -29,9 +29,10 @@ import (
 // the dispatcher), which is the desired behavior — a wedged USB serial write
 // should slow the offending Client, not silently grow a queue.
 //
-// Channel.Run also fans out frames from VideoIn to every attached Client's
-// VideoOut FrameSink. WriteFrame calls are non-blocking by FrameSink contract:
-// a slow client drops frames, never blocks other clients or the channel pump.
+// Video frames are pushed into the Channel via [Channel.Fanout] by the
+// Application's per-Channel video supervisor (which owns subscription,
+// failure detection, and fallback policy). Channel itself does not run a
+// video pump; it only fans frames out to attached Clients.
 type Channel struct {
 	VideoIn  VideoSource
 	KeyOut   KeyEventSink
@@ -79,20 +80,14 @@ func (c *Channel) UnregisterClient(cl *Client) {
 }
 
 // Run drains the Channel's edge queue, mutates KbdState in arrival order, and
-// dispatches each fully-stamped KeyEvent to the KeyEventSink; in parallel it
-// pumps frames from VideoIn to every registered Client. Returns when ctx is
-// cancelled. There is exactly one Run goroutine per Channel; the single
-// drainer is the sole writer to KbdState, so no further synchronization is
-// needed.
+// dispatches each fully-stamped KeyEvent to the KeyEventSink. Returns when
+// ctx is cancelled. There is exactly one Run goroutine per Channel; the
+// single drainer is the sole writer to KbdState, so no further synchronization
+// is needed.
 func (c *Channel) Run(ctx context.Context) {
-	var wg sync.WaitGroup
-	if c.VideoIn != nil {
-		wg.Go(func() { c.runVideoPump(ctx) })
-	}
 	for {
 		select {
 		case <-ctx.Done():
-			wg.Wait()
 			return
 		case e := <-c.edgeCh:
 			if e.Code.IsModifier() {
@@ -114,27 +109,26 @@ func (c *Channel) Run(ctx context.Context) {
 	}
 }
 
-func (c *Channel) runVideoPump(ctx context.Context) {
-	frames := c.VideoIn.Subscribe(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case vf, ok := <-frames:
-			if !ok {
-				return
-			}
-			c.fanout(vf)
-		}
-	}
-}
-
-func (c *Channel) fanout(vf VideoFrame) {
+// Fanout delivers vf to every attached Client's FrameSink. WriteFrame calls
+// are non-blocking by FrameSink contract: a slow client drops frames, never
+// blocks other clients or the caller.
+func (c *Channel) Fanout(vf VideoFrame) {
 	c.mu.RLock()
 	for cl := range c.clients {
 		if sink := cl.VideoOut(); sink != nil {
 			sink.WriteFrame(vf)
 		}
+	}
+	c.mu.RUnlock()
+}
+
+// ForEachClient invokes fn once per attached Client under the Channel's
+// read lock. Used by Application to push outbound notifications to all
+// Clients on this Channel without taking the Application's own lock.
+func (c *Channel) ForEachClient(fn func(*Client)) {
+	c.mu.RLock()
+	for cl := range c.clients {
+		fn(cl)
 	}
 	c.mu.RUnlock()
 }

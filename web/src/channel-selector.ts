@@ -26,18 +26,14 @@ export function attachChannelSelector(
   send: Sender,
 ): () => void {
   const fireSwitch = (): void => {
-    const id = selectEl.value;
-    if (id === '') return;
     send({
       type: MSG_SWITCH_CHANNEL,
-      payload: { channel_id: id },
+      payload: { channel_id: selectEl.value },
     });
   };
-  // The browser pre-selects the first option but never fires a 'change' event
-  // for it, so the server would stay on the default channel until the user
-  // manually picks something else. Sync once on attach so the visible
-  // selection matches the server's view of "current channel".
-  fireSwitch();
+  // The first option is "(none)" with an empty id; that matches the server's
+  // initial unattached state, so we do not fire on attach. The user's first
+  // 'change' to a real channel sends the first switch.
   selectEl.addEventListener('change', fireSwitch);
   return () => {
     selectEl.removeEventListener('change', fireSwitch);

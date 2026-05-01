@@ -13,7 +13,7 @@
 | `internal/http/web` | Embedded TypeScript for web client | - | - |
 | `internal/kvm` | Defines application behavior. | `Application`, `Channel`, `Client`, `KeyboardState`, `KeyEvent` (carries a `Modifiers` snapshot of the post-edge HID modifier mask), `ModifierMask`, `VideoSource`, `FrameSink`, `KeyEventSink`, `MessageWriter` | - |
 | `internal/picolink` | Implements `kvm.KeyEventSink` for the serial protocol sent to the Pico keyboard emulator. Also implements USB HID conversion unless/until another KeyEventSink also uses USB keycodes. | `Keyboard` | - |
-| `internal/v4l` | Implements `kvm.VideoSource` for v4l video capture devices. | `MJPEGStream` | - |
+| `internal/v4l` | Implements `kvm.VideoSource` for V4L2 capture devices by supervising an ffmpeg subprocess and parsing its MJPEG stdout. No CGO and no v4l2 ioctls in the data path. | `MJPEGStream`, `Config` | `kvm` |
 | `internal/synthetic` | Synthetic `kvm.VideoSource` implementations: a "channel down" fallback video feed, and a dev test-pattern source used when no capture hardware is attached. Expected to be replaced or joined by driver-specific packages as additional video codecs are supported. | - | `kvm` |
 
 ## Wiring / dependency injection

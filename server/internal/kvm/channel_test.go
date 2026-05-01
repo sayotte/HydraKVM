@@ -156,9 +156,8 @@ func (s *boundedSink) WriteFrame(vf VideoFrame) {
 	}
 }
 
-func TestChannelPumpsFramesToRegisteredClients(t *testing.T) {
-	src := &fakeVideoSource{interval: 5 * time.Millisecond}
-	ch := NewChannel(src, nil)
+func TestChannelFanoutDeliversToRegisteredClients(t *testing.T) {
+	ch := NewChannel(nil, nil)
 
 	s1, s2 := &countingSink{}, &countingSink{}
 	c1 := &Client{}
@@ -168,34 +167,18 @@ func TestChannelPumpsFramesToRegisteredClients(t *testing.T) {
 	ch.RegisterClient(c1)
 	ch.RegisterClient(c2)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		ch.Run(ctx)
-		close(done)
-	}()
-
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if s1.n.Load() > 0 && s2.n.Load() > 0 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
+	for range 3 {
+		ch.Fanout(VideoFrame{Data: []byte{0xFF}, IsKey: true})
 	}
-	cancel()
-	<-done
 
-	if s1.n.Load() == 0 || s2.n.Load() == 0 {
-		t.Errorf("sinks: s1=%d s2=%d; want both > 0", s1.n.Load(), s2.n.Load())
+	if s1.n.Load() != 3 || s2.n.Load() != 3 {
+		t.Errorf("sinks: s1=%d s2=%d; want both = 3", s1.n.Load(), s2.n.Load())
 	}
 }
 
-func TestChannelDropsFramesForSaturatedSink(t *testing.T) {
-	src := &fakeVideoSource{interval: 2 * time.Millisecond}
-	ch := NewChannel(src, nil)
+func TestChannelFanoutRespectsSinkBackpressure(t *testing.T) {
+	ch := NewChannel(nil, nil)
 
-	// Sink with capacity 1 and a consumer that never reads — drops should
-	// accumulate without affecting the other sink's pace.
 	saturated := newBoundedSink(1)
 	healthy := newBoundedSink(64)
 	cs := &Client{}
@@ -205,22 +188,9 @@ func TestChannelDropsFramesForSaturatedSink(t *testing.T) {
 	ch2.SetVideoOut(healthy)
 	ch.RegisterClient(ch2)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		ch.Run(ctx)
-		close(done)
-	}()
-
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if saturated.dropped.Load() > 0 && len(healthy.frames) >= 3 {
-			break
-		}
-		time.Sleep(2 * time.Millisecond)
+	for range 16 {
+		ch.Fanout(VideoFrame{Data: []byte{0xFF}, IsKey: true})
 	}
-	cancel()
-	<-done
 
 	if saturated.dropped.Load() == 0 {
 		t.Error("expected saturated sink to drop frames")

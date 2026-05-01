@@ -43,6 +43,7 @@ import (
 	"github.com/sayotte/hydrakvm/internal/kvm"
 	"github.com/sayotte/hydrakvm/internal/picolink"
 	"github.com/sayotte/hydrakvm/internal/synthetic"
+	"github.com/sayotte/hydrakvm/internal/v4l"
 )
 
 const (
@@ -113,9 +114,14 @@ func run(cfgPath, logLevel string) error {
 		app.AddChannel(chCfg.Name, ch)
 	}
 
-	defaultCh := kvm.NewChannel(synthetic.NewVideoSource("No Channel Selected"), discardKeyboard{})
-	app.AddChannel("__default__", defaultCh)
-	app.DefaultChannel = defaultCh
+	// NoChannelVideo feeds an unattached Client's video pipe before any
+	// SwitchChannel selects a real Channel and after a switch back to the
+	// "(none)" sentinel; supplied as an interface value so internal/kvm
+	// need not import internal/synthetic.
+	app.NoChannelVideo = synthetic.NewVideoSource("No Channel Selected")
+
+	// FallbackVideo covers any Channel whose primary VideoIn fails.
+	app.FallbackVideo = synthetic.NewVideoSource("Channel Down")
 
 	tr := wsockt.NewW3CKeyEventTranslator()
 	router := dispatch.NewRouter()
@@ -170,6 +176,13 @@ func newChannel(cfg config.ChannelConfig, logger *slog.Logger) (*kvm.Channel, er
 	switch cfg.Video.Type {
 	case "synthetic":
 		vs = synthetic.NewVideoSource(cfg.Name)
+	case "v4l":
+		vs = v4l.New(v4l.Config{
+			DevicePath: cfg.Video.DevicePath,
+			Width:      cfg.Video.Width,
+			Height:     cfg.Video.Height,
+			Framerate:  cfg.Video.Framerate,
+		}, logger)
 	default:
 		return nil, fmt.Errorf("unknown video source type %q", cfg.Video.Type)
 	}
@@ -190,12 +203,6 @@ func newChannel(cfg config.ChannelConfig, logger *slog.Logger) (*kvm.Channel, er
 
 	return kvm.NewChannel(vs, ks), nil
 }
-
-// discardKeyboard is the no-op [kvm.KeyEventSink] attached to the default
-// "no channel selected" channel, where there is no real target to drive.
-type discardKeyboard struct{}
-
-func (discardKeyboard) ReportKeyEvent(kvm.KeyEvent) {}
 
 // loggingDiscardKeyboard is the "null" key-sink driver: it discards events
 // like discardKeyboard but logs each one at debug, useful for end-to-end

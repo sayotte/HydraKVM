@@ -75,9 +75,7 @@ func (tickingJPEGSource) Subscribe(ctx context.Context) <-chan kvm.VideoFrame {
 func newStreamingTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	app := kvm.NewApplication(t.Context(), nil)
-	defaultCh := kvm.NewChannel(tickingJPEGSource{}, nil)
-	app.AddChannel("__default__", defaultCh)
-	app.DefaultChannel = defaultCh
+	app.NoChannelVideo = tickingJPEGSource{}
 
 	router := dispatch.NewRouter()
 	dispatch.Register(router, kvm.MsgSwitchChannel, app.SwitchChannel)

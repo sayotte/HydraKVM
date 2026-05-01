@@ -30,6 +30,12 @@ import (
 type Client struct {
 	videoOut atomic.Pointer[FrameSink]
 	Outbound MessageWriter
+
+	// MJPEGStreamURL is the per-Client MJPEG endpoint URL minted by the HTTP
+	// layer at connect time. Application re-emits it as an [MsgMJPEGURL]
+	// hint alongside [MsgClientUpdate] on video failover and recovery so the
+	// browser can re-attach its long-lived <img> source.
+	MJPEGStreamURL string
 }
 
 // SetVideoOut installs s as the Client's frame sink (or clears it when s is
@@ -48,6 +54,19 @@ func (c *Client) VideoOut() FrameSink {
 		return *p
 	}
 	return nil
+}
+
+// ClearVideoOutIf atomically clears the sink only if it still equals s.
+// Returns true if the clear happened. The HTTP layer uses this so a
+// connection that re-fetches /stream/{token} (overlapping with the
+// previous connection during channel switch / failover) cannot have its
+// freshly-installed sink nil'd by the older connection's teardown.
+func (c *Client) ClearVideoOutIf(s FrameSink) bool {
+	p := c.videoOut.Load()
+	if p == nil || *p != s {
+		return false
+	}
+	return c.videoOut.CompareAndSwap(p, nil)
 }
 
 // ctxKey is an unexported type to avoid collisions with other packages'
